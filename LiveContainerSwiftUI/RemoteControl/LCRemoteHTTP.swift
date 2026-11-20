@@ -128,7 +128,9 @@ private final class LCRemoteSession {
     private var accumulated = Data()
     private var bodyFileURL: URL?
     private var bodyFileHandle: FileHandle?
-    private var finished = false
+    private var closed = false
+    private var responded = false
+    private var processed = false
     // 超过这个大小的 body 落盘（IPA 动辄上百 MB）
     private let memoryBodyLimit = 8 * 1024 * 1024
 
@@ -153,8 +155,8 @@ private final class LCRemoteSession {
     }
 
     private func close() {
-        guard !finished else { return }
-        finished = true
+        guard !closed else { return }
+        closed = true
         bodyFileHandle?.closeFile()
         bodyFileHandle = nil
         conn.cancel()
@@ -248,7 +250,8 @@ private final class LCRemoteSession {
     }
 
     private func finishRequest() {
-        guard let head, !finished else { return }
+        guard let head, !processed else { return }
+        processed = true
         bodyFileHandle?.closeFile()
         bodyFileHandle = nil
 
@@ -273,7 +276,8 @@ private final class LCRemoteSession {
     }
 
     private func respond(_ resp: LCRemoteResponse) {
-        guard !finished else { return }
+        guard !responded else { return }
+        responded = true
         var headers = resp.headers
         headers["Content-Length"] = String(resp.body.count)
         headers["Connection"] = "close"
@@ -286,7 +290,6 @@ private final class LCRemoteSession {
         var payload = Data(head.utf8)
         payload.append(resp.body)
 
-        finished = true
         conn.send(content: payload, completion: .contentProcessed { [weak self] _ in
             self?.close()
         })
