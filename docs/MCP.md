@@ -69,6 +69,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python3 lc_m
 | `lc_jobs` | `job_id?` | 查异步任务状态；省略则列最近任务 |
 | `lc_uninstall_app` | `bundle_id`, `keep_data?` | 卸载，`keep_data=true` 保留数据容器 |
 | `lc_launch_app` | `bundle_id`, `container?`, `url?`, `multitask?` | 启动 App。`multitask=true` 在容器内小窗运行（远程调试建议用它，否则容器进程会让位给 guest，服务会短暂掉线） |
+| `lc_open_app` | `bundle_id`, `container?`, `url?` | **一步到位**：多任务打开 App 并等 guest 侧就绪，返回窗口 + guest pid |
 
 ### Tweak（dylib / framework）
 
