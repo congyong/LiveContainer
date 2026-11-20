@@ -53,6 +53,13 @@ enum LCRemoteAPI {
             case ("GET", "/api/v1/logs"):
                 return await logs(req)
 
+            case ("GET", "/api/v1/logs/guest"):
+                return guestLogs(req)
+
+            case ("DELETE", "/api/v1/logs/guest"):
+                let removed = LCRemoteGuestLogs.clear(name: req.query["name"])
+                return .json(["removed": removed])
+
             case ("DELETE", let p) where p.hasPrefix("/api/v1/apps/"):
                 let bundleId = String(p.dropFirst("/api/v1/apps/".count)).removingPercentEncoding ?? ""
                 return try await uninstall(bundleId: bundleId, keepData: req.query["keepData"] == "1" || req.query["keepData"] == "true")
@@ -521,6 +528,21 @@ enum LCRemoteAPI {
             "count": items.count,
             "items": items.map { $0.json }
         ])
+    }
+
+    // MARK: - guest 日志（LiveProcess 侧落盘）
+
+    private static func guestLogs(_ req: LCRemoteRequest) -> LCRemoteResponse {
+        if let name = req.query["name"] {
+            let offset = Int(req.query["offset"] ?? "0") ?? 0
+            let limit = min(max(Int(req.query["limit"] ?? "65536") ?? 65536, 512), 1024 * 1024)
+            guard let payload = LCRemoteGuestLogs.read(name: name, offset: offset, limitBytes: limit) else {
+                return .error("没有这个日志文件: \(name)", status: 404, code: "not_found")
+            }
+            return .json(payload)
+        }
+        let items = LCRemoteGuestLogs.list()
+        return .json(["count": items.count, "logs": items])
     }
 
     // MARK: - 工具
