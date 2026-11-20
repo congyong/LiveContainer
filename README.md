@@ -60,14 +60,14 @@ MCP 客户端（Claude / Hermes / …） ──stdio──▶ tools/mcp/lc_mcp.p
 }
 ```
 
-## MCP 工具（25 个）
+## MCP 工具（26 个）
 
 | 分组 | 工具 |
 | --- | --- |
 | 设备 / 安装 / 启动 | `lc_health` `lc_apps` `lc_install_ipa` `lc_install_from_url` `lc_jobs` `lc_uninstall_app` `lc_launch_app` |
 | Tweak（dylib / framework） | `lc_tweaks` `lc_tweak_import` `lc_tweak_toggle` `lc_tweak_sign` `lc_tweak_delete` `lc_tweak_folder` |
 | 多任务窗口 | `lc_windows` `lc_window_action`（scale / pip / maximize / close） |
-| 界面自测 | `lc_ui_tree` `lc_ui_activate` `lc_ui_tap` `lc_ui_tab` `lc_ui_text` `lc_screenshot` |
+| 界面自测 | `lc_ui_tree` `lc_ui_activate` `lc_ui_tap` `lc_ui_taps`(序列点击) `lc_ui_tab` `lc_ui_text` `lc_screenshot` |
 | 日志 | `lc_logs`（容器自身） `lc_guest_logs`（guest App 与注入 tweak） `lc_guest_logs_clear` |
 | 保活 | `lc_keepalive`（off / audio / screenAwake / audioAndScreen） |
 

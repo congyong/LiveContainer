@@ -5,7 +5,7 @@
 
 用法（在 MCP 客户端里注册，例如 Hermes 的 mcp_servers）：
     command: python3
-    args: ["/path/to/tools/mcp/lc_mcp.py"]
+    args: ["/home/congyong/workspace/lc-mcp/lc_mcp.py"]
     env:
       LC_REMOTE_URL:   http://100.x.y.z:8848      # 设备的 tailnet IP
       LC_REMOTE_TOKEN: <设备上 设置 → 远程控制 里显示的 token>
@@ -291,6 +291,30 @@ def tool_guest_logs_clear(args):
     return api_delete("/api/v1/logs/guest" + qs)
 
 
+def tool_ui_taps(args):
+    steps = args.get("steps") or []
+    if not isinstance(steps, list) or not steps:
+        raise RuntimeError("steps 必须是非空数组，例如 [{\"label\":\"启动\"},{\"x\":200,\"y\":300,\"delayMs\":800}]")
+    body = {"steps": steps,
+            "detectChange": bool(args.get("detect_change", True)),
+            "captureAfter": bool(args.get("capture_after", True))}
+    if args.get("window_id"):
+        body["windowId"] = args["window_id"]
+    res = _request("POST", "/api/v1/ui/taps",
+                   data=json.dumps(body).encode(), content_type="application/json")
+    b64 = None
+    if isinstance(res, dict) and res.get("screenshotB64"):
+        b64 = res.pop("screenshotB64")
+    out_path = None
+    if b64:
+        import base64
+        out_path = args.get("out_path") or f"/tmp/lc-seq-{int(time.time())}.jpg"
+        with open(out_path, "wb") as fh:
+            fh.write(base64.b64decode(b64))
+        res["screenshot_path"] = out_path
+    return res
+
+
 TOOLS = [
     {
         "name": "lc_health",
@@ -480,6 +504,36 @@ TOOLS = [
         },
     },
     {
+        "name": "lc_ui_taps",
+        "description": "按顺序模拟多次点击（label / index / 坐标混合），每步可设 delayMs，回报每步是否让画面发生变化，可选跑完截图存本机。适合装完 ipa 后做内部点击自测。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "description": "步骤数组。每步：{label?} 或 {identifier?} 或 {index?} 或 {x,y}，可选 delayMs（默认 400）、note",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string"},
+                            "identifier": {"type": "string"},
+                            "index": {"type": "integer"},
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "delayMs": {"type": "integer"},
+                            "note": {"type": "string"},
+                        },
+                    },
+                },
+                "detect_change": {"type": "boolean", "description": "每步比较截图哈希，判断界面是否变化（默认 true）"},
+                "capture_after": {"type": "boolean", "description": "跑完截一张图存本机，返回路径（默认 true）"},
+                "window_id": {"type": "string", "description": "截图用哪个窗口，省略=整个界面"},
+                "out_path": {"type": "string", "description": "截图保存路径，默认 /tmp/lc-seq-<ts>.jpg"},
+            },
+            "required": ["steps"],
+        },
+    },
+    {
         "name": "lc_ui_tap",
         "description": "按屏幕坐标点击（x,y），命中后走控件 sendActions 或 accessibilityActivate。",
         "inputSchema": {
@@ -554,6 +608,7 @@ HANDLERS = {
     "lc_install_from_url": tool_install_from_url,
     "lc_ui_tree": tool_ui_tree,
     "lc_ui_activate": tool_ui_activate,
+    "lc_ui_taps": tool_ui_taps,
     "lc_ui_tap": tool_ui_tap,
     "lc_ui_tab": tool_ui_tab,
     "lc_guest_logs": tool_guest_logs,

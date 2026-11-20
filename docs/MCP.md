@@ -56,7 +56,7 @@ MCP 客户端（Claude / Hermes / …） ──stdio──▶ tools/mcp/lc_mcp.p
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python3 lc_mcp.py
 ```
 
-## 三、工具清单（25 个）
+## 三、工具清单（26 个）
 
 ### 设备 / 安装 / 启动
 
@@ -95,6 +95,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python3 lc_m
 | `lc_ui_tree` | — | 导出可访问性树：label / identifier / frame / 是否可激活 |
 | `lc_ui_activate` | `index?` / `label?` / `identifier?` | 点一下元素（SwiftUI 走 accessibilityActivate，UIKit 走 sendActions） |
 | `lc_ui_tap` | `x`, `y` | 按屏幕坐标点击（逻辑 point，可直接用 ui_tree 里的 frame 中心） |
+| `lc_ui_taps` | `steps[]`, `detect_change?`, `capture_after?` | **连续点击序列**：每步 label / index / 坐标任意组合，可设 delayMs；回报每步画面是否变化，可选跑完截图 |
 | `lc_ui_tab` | `index?` / `name?` | 切底部 Tab（源 / App / 模块 / 设置） |
 | `lc_ui_text` | `text` | 给当前输入框输入文本（先 activate/tap 点中它） |
 | `lc_screenshot` | `window_id?`, `out_path?`, `quality?`, `max_width?` | 截图成 JPEG 存到本机并返回路径；省略 window_id 截整个界面 |
@@ -135,6 +136,17 @@ lc_tweak_folder {name:"shark"}
 lc_tweak_import {path:"/tmp/BlockNetPlus-arm64.dylib", folder:"shark"}
 lc_tweak_sign {folder:"shark", force:true}   // 看 changedCount 是否 > 0
 lc_tweaks {folder:"shark"}                   // 看 signature.cdhash
+```
+
+**装完 ipa 做内部点击自测**
+```
+lc_ui_taps {steps:[
+  {label:"启动"},
+  {x:200, y:520, delayMs:1500, note:"进首页"},
+  {x:120, y:300, delayMs:800,  note:"点第一个入口"},
+  {x:340, y:820, delayMs:800,  note:"点底部按钮"}
+], detect_change:true, capture_after:true}
+→ 返回每步 ok / changed，以及截图路径
 ```
 
 ## 五、设备端 REST（不用 MCP 也能直接 curl）

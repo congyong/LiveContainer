@@ -13,6 +13,7 @@
 //
 
 import UIKit
+import CryptoKit
 
 struct LCRemoteUIElement {
     let index: Int
@@ -241,6 +242,49 @@ enum LCRemoteUIAutomation {
         if let t = vc as? UITabBarController { out.append(t) }
         for child in vc.children { collectTabBars(child, into: &out) }
         collectTabBars(vc.presentedViewController, into: &out)
+    }
+
+    // MARK: - 多点序列（模拟连续点击）
+
+    static func screenHash(maxWidth: CGFloat = 96) -> String {
+        guard let view = LCWindowManager.captureView(nil),
+              let data = LCScreenshot.jpeg(of: view, maxWidth: maxWidth, quality: 30) else { return "" }
+        return SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func number(_ any: Any?) -> Double? {
+        if let d = any as? Double { return d }
+        if let i = any as? Int { return Double(i) }
+        if let s = any as? String { return Double(s) }
+        return nil
+    }
+
+    /// 依次执行：label 激活 / index 激活 / 坐标点击；每步可选等待，并报告画面是否变化。
+    static func runSequence(_ steps: [[String: Any]], detectChange: Bool) async -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        for (i, step) in steps.enumerated() {
+            let before = detectChange ? screenHash() : ""
+            var r: (ok: Bool, detail: String)
+            if let label = step["label"] as? String, !label.isEmpty {
+                r = activate(label: label, identifier: (step["identifier"] as? String) ?? "")
+            } else if let identifier = step["identifier"] as? String, !identifier.isEmpty {
+                r = activate(label: "", identifier: identifier)
+            } else if let index = step["index"] as? Int {
+                r = activate(index: index)
+            } else if let x = number(step["x"]), let y = number(step["y"]) {
+                r = tap(x: CGFloat(x), y: CGFloat(y))
+            } else {
+                r = (false, "step 需要 label / identifier / index / x+y 之一")
+            }
+            let delay = (step["delayMs"] as? Int) ?? 400
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000) }
+            let after = detectChange ? screenHash() : ""
+            var item: [String: Any] = ["index": i, "ok": r.ok, "detail": r.detail]
+            if detectChange { item["changed"] = (before != after) }
+            if let note = step["note"] as? String { item["note"] = note }
+            out.append(item)
+        }
+        return out
     }
 
     // MARK: - 文本输入

@@ -110,6 +110,9 @@ enum LCRemoteAPI {
             case ("POST", "/api/v1/ui/activate"):
                 return await uiActivate(req)
 
+            case ("POST", "/api/v1/ui/taps"):
+                return await uiTaps(req)
+
             case ("POST", "/api/v1/ui/tap"):
                 return await uiTap(req)
 
@@ -494,6 +497,25 @@ enum LCRemoteAPI {
         }
         let r = LCRemoteUIAutomation.tab(index: index)
         return .json(["ok": r.ok, "detail": r.detail, "index": index ?? -1])
+    }
+
+    /// {"steps":[{"label":"启动"},{"x":200,"y":300,"delayMs":800}], "detectChange":true, "captureAfter":true}
+    @MainActor
+    private static func uiTaps(_ req: LCRemoteRequest) async -> LCRemoteResponse {
+        let obj = jsonBody(req)
+        guard let steps = obj["steps"] as? [[String: Any]], !steps.isEmpty else {
+            return .error("需要 steps 数组", status: 400, code: "bad_request")
+        }
+        let detect = (obj["detectChange"] as? Bool) ?? true
+        let results = await LCRemoteUIAutomation.runSequence(steps, detectChange: detect)
+        var payload: [String: Any] = ["count": results.count, "steps": results]
+        if (obj["captureAfter"] as? Bool) ?? false,
+           let data = LCScreenshot.capture(windowId: obj["windowId"] as? String,
+                                           maxWidth: 600, quality: 0.6) {
+            payload["screenshotB64"] = data.base64EncodedString()
+            payload["screenshotBytes"] = data.count
+        }
+        return .json(payload)
     }
 
     /// {"text":"hello"}
