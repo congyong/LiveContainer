@@ -281,8 +281,8 @@ enum LCRemoteAPI {
     @MainActor
     private static func tweakSign(_ req: LCRemoteRequest) async throws -> LCRemoteResponse {
         let force = req.query["force"] == "1" || req.query["force"] == "true"
-        try await LCTweakManager.sign(folder: req.query["folder"], force: force)
-        return .json(["signed": true, "folder": req.query["folder"] ?? "", "force": force])
+        let result = try await LCTweakManager.sign(folder: req.query["folder"], force: force)
+        return .json(result)
     }
 
     @MainActor
