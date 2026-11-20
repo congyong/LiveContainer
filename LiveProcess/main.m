@@ -37,6 +37,7 @@ static NSDictionary *retrievedAppInfo;
 @end
 
 extern int LiveContainerMain(int argc, char *argv[]);
+extern void LCGuestSidecarStart(void);
 
 // 把 guest 进程（以及注入进来的 tweak）的 stdout/stderr 落到 app group 里的文件，
 // LiveContainer 侧通过 /api/v1/logs/guest 读取。os_log() 单独调用的日志不在其中。
@@ -92,6 +93,7 @@ int LiveProcessMain(int argc, char *argv[]) {
     
     NSLog(@"Retrieved app info: %@", appInfo);
     LCRedirectGuestLogs(appInfo);
+    LCGuestSidecarStart();   // loopback HTTP：宿主代理过来点击/截图/取树
     // Set LiveContainer's home path
     setenv("LP_HOME_PATH", getenv("HOME"), 1);
     const char *overrideHomePath = [appInfo[@"lcHomePath"] fileSystemRepresentation];

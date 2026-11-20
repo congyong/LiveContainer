@@ -40,6 +40,8 @@ final class LCRemoteControl {
         srv.onLog = { msg in
             LCRemoteLogStore.shared.append(msg, src: "api")
         }
+        // guest sidecar 用同一个 token（通过 app group 文件传递）
+        LCRemoteGuestProxy.writeTokenIfNeeded()
         try srv.start(port: LCRemoteConfig.port)
         server = srv
         lastError = nil

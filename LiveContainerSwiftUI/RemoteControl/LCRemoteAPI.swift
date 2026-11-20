@@ -29,6 +29,9 @@ enum LCRemoteAPI {
 
         do {
             switch (req.method, path) {
+            case (_, let p) where p.hasPrefix("/api/v1/guest/"):
+                return await LCRemoteGuestProxy.forward(req, path: p)
+
             case ("GET", "/api/v1/self"):
                 return await selfInfo()
 

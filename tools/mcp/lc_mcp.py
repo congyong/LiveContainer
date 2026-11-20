@@ -315,6 +315,52 @@ def tool_ui_taps(args):
     return res
 
 
+def tool_guest_tree(_args):
+    return api_get("/api/v1/guest/ui/tree")
+
+
+def tool_guest_activate(args):
+    body = {}
+    for k in ("index", "label", "identifier", "x", "y"):
+        if args.get(k) is not None:
+            body[k] = args[k]
+    if not body:
+        raise RuntimeError("需要 index / label / identifier / x+y 之一")
+    return _request("POST", "/api/v1/guest/ui/activate",
+                    data=json.dumps(body).encode(), content_type="application/json")
+
+
+def tool_guest_taps(args):
+    steps = args.get("steps") or []
+    if not steps:
+        raise RuntimeError("steps 必须是非空数组")
+    body = {"steps": steps, "detectChange": bool(args.get("detect_change", True))}
+    return _request("POST", "/api/v1/guest/ui/taps",
+                    data=json.dumps(body).encode(), content_type="application/json")
+
+
+def tool_guest_text(args):
+    return _request("POST", "/api/v1/guest/ui/text",
+                    data=json.dumps({"text": args.get("text", "")}).encode(),
+                    content_type="application/json")
+
+
+def tool_guest_screenshot(args):
+    qs = ["maxWidth=%d" % int(args.get("max_width", 900)),
+          "quality=%d" % int(args.get("quality", 70))]
+    data = _request("GET", "/api/v1/guest/screenshot?" + "&".join(qs))
+    if not isinstance(data, (bytes, bytearray)) or not data:
+        raise RuntimeError("guest 截图返回空")
+    out = args.get("out_path") or f"/tmp/lc-guest-{int(time.time())}.jpg"
+    with open(out, "wb") as fh:
+        fh.write(data)
+    return {"path": out, "bytes": len(data)}
+
+
+def tool_guest_info(_args):
+    return api_get("/api/v1/guest/info")
+
+
 TOOLS = [
     {
         "name": "lc_health",
@@ -487,6 +533,60 @@ TOOLS = [
         },
     },
     {
+        "name": "lc_guest_info",
+        "description": "guest App 进程信息（bundleId / pid / 屏幕尺寸）。需要 guest App 正在运行。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "lc_guest_tree",
+        "description": "导出 **guest App 自己界面** 的可访问性树（在 guest 进程内取，能看到 App 内部的按钮）。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "lc_guest_activate",
+        "description": "点 guest App 内部的元素：index / label / identifier / x+y。走 guest 进程内的 accessibilityActivate。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "index": {"type": "integer"},
+                "label": {"type": "string"},
+                "identifier": {"type": "string"},
+                "x": {"type": "number"},
+                "y": {"type": "number"},
+            },
+        },
+    },
+    {
+        "name": "lc_guest_taps",
+        "description": "在 guest App 内部按顺序点击多步（label/index/坐标），每步 track 画面是否变化。装完 ipa 做内部操作自测就用它。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "steps": {"type": "array", "items": {"type": "object"},
+                          "description": "每步 {label?|identifier?|index?|x,y}，可选 delayMs"},
+                "detect_change": {"type": "boolean"},
+            },
+            "required": ["steps"],
+        },
+    },
+    {
+        "name": "lc_guest_text",
+        "description": "给 guest App 内当前输入框输入文本。",
+        "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
+    },
+    {
+        "name": "lc_guest_screenshot",
+        "description": "截 guest App 自己的画面（在 guest 进程内渲染，不受跨进程合成影响），存本机并返回路径。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "max_width": {"type": "integer", "description": "默认 900"},
+                "quality": {"type": "integer", "description": "JPEG 质量 1-100，默认 70"},
+                "out_path": {"type": "string"},
+            },
+        },
+    },
+    {
         "name": "lc_ui_tree",
         "description": "导出当前界面可访问性树（label/identifier/frame/是否可激活）。做界面自测先调这个，再按 index 激活。",
         "inputSchema": {"type": "object", "properties": {}},
@@ -608,6 +708,12 @@ HANDLERS = {
     "lc_install_from_url": tool_install_from_url,
     "lc_ui_tree": tool_ui_tree,
     "lc_ui_activate": tool_ui_activate,
+    "lc_guest_info": tool_guest_info,
+    "lc_guest_tree": tool_guest_tree,
+    "lc_guest_activate": tool_guest_activate,
+    "lc_guest_taps": tool_guest_taps,
+    "lc_guest_text": tool_guest_text,
+    "lc_guest_screenshot": tool_guest_screenshot,
     "lc_ui_taps": tool_ui_taps,
     "lc_ui_tap": tool_ui_tap,
     "lc_ui_tab": tool_ui_tab,
