@@ -37,8 +37,15 @@ enum LCRemoteKeepAliveMode: String, CaseIterable, Identifiable {
 
     static let defaultsKey = "LCRemoteKeepAlive"
 
+    /// 默认值就是 .audio：远程服务一开就带静音音频保活，用户不用再手动选。
     static var stored: LCRemoteKeepAliveMode {
-        get { LCRemoteKeepAliveMode(rawValue: LCUtils.appGroupUserDefault.string(forKey: defaultsKey) ?? "") ?? .off }
+        get {
+            if let raw = LCUtils.appGroupUserDefault.string(forKey: defaultsKey),
+               let mode = LCRemoteKeepAliveMode(rawValue: raw) {
+                return mode
+            }
+            return .audio
+        }
         set { LCUtils.appGroupUserDefault.set(newValue.rawValue, forKey: defaultsKey) }
     }
 }
