@@ -94,6 +94,21 @@ enum LCRemoteAPI {
             case ("GET", "/api/v1/screenshot"):
                 return await screenshot(req)
 
+            case ("GET", "/api/v1/ui/tree"):
+                return await uiTree()
+
+            case ("POST", "/api/v1/ui/activate"):
+                return await uiActivate(req)
+
+            case ("POST", "/api/v1/ui/tap"):
+                return await uiTap(req)
+
+            case ("POST", "/api/v1/ui/tab"):
+                return await uiTab(req)
+
+            case ("POST", "/api/v1/ui/text"):
+                return await uiText(req)
+
             default:
                 return .error("no route for \(req.method) \(path)", status: 404, code: "not_found")
             }
@@ -360,6 +375,86 @@ enum LCRemoteAPI {
         }
         LCRemoteKeepAlive.shared.apply(mode)
         return .json(["ok": true, "keepAlive": LCRemoteKeepAlive.shared.status])
+    }
+
+    // MARK: - UI 自动化
+
+    private static func jsonBody(_ req: LCRemoteRequest) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: req.bodyData())) as? [String: Any] ?? [:]
+    }
+
+    @MainActor
+    private static func uiTree() async -> LCRemoteResponse {
+        let items = LCRemoteUIAutomation.tree()
+        return .json(["count": items.count, "elements": items.map { $0.json }])
+    }
+
+    /// {"index":12} 或 {"label":"App"} / {"identifier":"xxx"}
+    @MainActor
+    private static func uiActivate(_ req: LCRemoteRequest) async -> LCRemoteResponse {
+        let obj = jsonBody(req)
+        if let raw = obj["index"] as? Int {
+            let r = LCRemoteUIAutomation.activate(index: raw)
+            return .json(["ok": r.ok, "detail": r.detail, "index": raw])
+        }
+        if let rawStr = obj["index"] as? String, let raw = Int(rawStr) {
+            let r = LCRemoteUIAutomation.activate(index: raw)
+            return .json(["ok": r.ok, "detail": r.detail, "index": raw])
+        }
+        let label = (obj["label"] as? String) ?? req.query["label"] ?? ""
+        let ident = (obj["identifier"] as? String) ?? req.query["identifier"] ?? ""
+        guard !label.isEmpty || !ident.isEmpty else {
+            return .error("需要 index / label / identifier 之一", status: 400, code: "bad_request")
+        }
+        let r = LCRemoteUIAutomation.activate(label: label, identifier: ident)
+        return .json(["ok": r.ok, "detail": r.detail, "label": label, "identifier": ident])
+    }
+
+    /// {"x":120,"y":300}
+    @MainActor
+    private static func uiTap(_ req: LCRemoteRequest) async -> LCRemoteResponse {
+        let obj = jsonBody(req)
+        func number(_ key: String) -> Double? {
+            if let d = obj[key] as? Double { return d }
+            if let i = obj[key] as? Int { return Double(i) }
+            if let s = obj[key] as? String { return Double(s) }
+            if let q = req.query[key] { return Double(q) }
+            return nil
+        }
+        guard let x = number("x"), let y = number("y") else {
+            return .error("需要 x / y", status: 400, code: "bad_request")
+        }
+        let r = LCRemoteUIAutomation.tap(x: CGFloat(x), y: CGFloat(y))
+        return .json(["ok": r.ok, "detail": r.detail, "x": x, "y": y])
+    }
+
+    /// {"index":1} 或 {"name":"App"}
+    @MainActor
+    private static func uiTab(_ req: LCRemoteRequest) async -> LCRemoteResponse {
+        let obj = jsonBody(req)
+        var index: Int?
+        if let i = obj["index"] as? Int { index = i }
+        else if let s = obj["index"] as? String { index = Int(s) }
+        else if let q = req.query["index"] { index = Int(q) }
+        if index == nil, let name = (obj["name"] as? String) ?? req.query["name"], !name.isEmpty {
+            // 名字走可访问性激活（Tab 按钮都有 label）
+            let r = LCRemoteUIAutomation.activate(label: name, identifier: "")
+            return .json(["ok": r.ok, "detail": r.detail, "name": name])
+        }
+        let r = LCRemoteUIAutomation.tab(index: index)
+        return .json(["ok": r.ok, "detail": r.detail, "index": index ?? -1])
+    }
+
+    /// {"text":"hello"}
+    @MainActor
+    private static func uiText(_ req: LCRemoteRequest) async -> LCRemoteResponse {
+        let obj = jsonBody(req)
+        let text = (obj["text"] as? String) ?? req.query["text"] ?? ""
+        guard !text.isEmpty else {
+            return .error("需要 text", status: 400, code: "bad_request")
+        }
+        let r = LCRemoteUIAutomation.typeText(text)
+        return .json(["ok": r.ok, "detail": r.detail, "text": text])
     }
 
     // MARK: - 日志
