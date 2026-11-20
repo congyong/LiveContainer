@@ -54,6 +54,15 @@ enum LCRemoteAPI {
                 let bundleId = String(p.dropFirst("/api/v1/apps/".count)).removingPercentEncoding ?? ""
                 return try await uninstall(bundleId: bundleId, keepData: req.query["keepData"] == "1" || req.query["keepData"] == "true")
 
+            case ("POST", "/api/v1/apps/from-url"):
+                return await installFromURL(req)
+
+            case ("GET", "/api/v1/jobs"):
+                return await jobsList()
+
+            case ("GET", let p) where p.hasPrefix("/api/v1/jobs/"):
+                return await jobStatus(String(p.dropFirst("/api/v1/jobs/".count)))
+
             case ("POST", let p) where p.hasPrefix("/api/v1/apps/") && p.hasSuffix("/launch"):
                 let bundleId = String(p.dropFirst("/api/v1/apps/".count).dropLast("/launch".count))
                 return try await launch(req, bundleId: bundleId)
@@ -134,6 +143,46 @@ enum LCRemoteAPI {
             try LCAppInstaller.uninstall(bundleId: bundleId, removeData: !keepData)
         }
         return .json(result)
+    }
+
+    // MARK: - 异步任务（设备自己下载 IPA）
+
+    @MainActor
+    private static func installFromURL(_ req: LCRemoteRequest) async -> LCRemoteResponse {
+        let obj = (try? JSONSerialization.jsonObject(with: req.bodyData())) as? [String: Any]
+        guard let raw = ((obj?["url"] as? String) ?? req.query["url"]), !raw.isEmpty else {
+            return .error("需要 url", status: 400, code: "bad_request")
+        }
+        let nameHint = (obj?["filename"] as? String) ?? req.query["filename"]
+        let replace: Bool = {
+            if let b = obj?["replace"] as? Bool { return b }
+            if let s = req.query["replace"] { return s != "0" && s.lowercased() != "false" }
+            return true
+        }()
+        var urlString = raw
+        if !urlString.contains(".") , let hint = nameHint, !hint.isEmpty {
+            urlString += "/" + hint
+        }
+        let job = LCRemoteJobs.shared.create(kind: "install_ipa_from_url")
+        job.message = "queued \(urlString)"
+        Task { @MainActor in
+            await LCRemoteJobs.shared.runInstall(job, urlString: urlString, replaceExisting: replace)
+        }
+        return .json(job.json, status: 202)
+    }
+
+    @MainActor
+    private static func jobsList() async -> LCRemoteResponse {
+        let items = LCRemoteJobs.shared.all().map { $0.json }
+        return .json(["count": items.count, "jobs": items])
+    }
+
+    @MainActor
+    private static func jobStatus(_ id: String) async -> LCRemoteResponse {
+        guard let job = LCRemoteJobs.shared.get(id) else {
+            return .error("没有这个任务: \(id)", status: 404, code: "not_found")
+        }
+        return .json(job.json)
     }
 
     // MARK: - 启动
