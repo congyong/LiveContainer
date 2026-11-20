@@ -242,8 +242,12 @@ static NSDictionary *LCActivateSpec(NSDictionary *spec) {
         return LCTap([spec[@"x"] doubleValue], [spec[@"y"] doubleValue]);
     }
     NSArray<NSObject *> *all = LCCollect();
-    if (spec[@"index"] && [spec[@"index"] integerValue] < (NSInteger)all.count) {
-        return LCActivateObject(all[[spec[@"index"] integerValue]]);
+    if (spec[@"index"]) {
+        NSInteger idx = [spec[@"index"] integerValue];
+        if (idx >= 0 && idx < (NSInteger)all.count) {
+            return LCActivateObject(all[(NSUInteger)idx]);
+        }
+        return @{@"ok": @NO, @"detail": [NSString stringWithFormat:@"index %ld 越界（当前 %lu 个元素，先 GET /api/v1/guest/ui/tree 刷新）", (long)idx, (unsigned long)all.count]};
     }
     NSString *label = [spec[@"label"] isKindOfClass:NSString.class] ? spec[@"label"] : nil;
     NSString *ident = [spec[@"identifier"] isKindOfClass:NSString.class] ? spec[@"identifier"] : nil;
@@ -264,6 +268,28 @@ static NSDictionary *LCActivateSpec(NSDictionary *spec) {
     return @{@"ok": @NO, @"detail": [NSString stringWithFormat:@"没找到可激活的 %@", label ?: ident]};
 }
 
+static UIView *LCFindTextInputView(void) {
+    NSMutableArray<UIView *> *stack = [NSMutableArray array];
+    for (UIScene *scene in LCApp().connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) [stack addObject:w];
+    }
+    UIView *fallback = nil;
+    while (stack.count) {
+        UIView *v = stack.lastObject;
+        [stack removeLastObject];
+        BOOL isInput = [v isKindOfClass:UITextField.class]
+                    || [v isKindOfClass:UITextView.class]
+                    || [v isKindOfClass:UISearchBar.class];
+        if (isInput) {
+            if (!fallback) fallback = v;
+            if (!v.hidden && v.alpha > 0.01 && v.window) return v;
+        }
+        for (UIView *sub in v.subviews) [stack addObject:sub];
+    }
+    return fallback;
+}
+
 static NSDictionary *LCTextInput(NSString *text) {
     UIView *fr = nil;
     NSMutableArray<UIView *> *stack = [NSMutableArray array];
@@ -276,7 +302,12 @@ static NSDictionary *LCTextInput(NSString *text) {
         if (v.isFirstResponder) { fr = v; break; }
         for (UIView *sub in v.subviews) [stack addObject:sub];
     }
-    if (!fr) return @{@"ok": @NO, @"detail": @"当前没有第一响应者"};
+    if (!fr) {
+        // 没有第一响应者：自己找界面上的输入控件（老 App 常常不自动聚焦）
+        fr = LCFindTextInputView();
+        if (fr) [fr becomeFirstResponder];
+    }
+    if (!fr) return @{@"ok": @NO, @"detail": @"界面上没有可聚焦的输入框"};
     if ([fr conformsToProtocol:@protocol(UIKeyInput)] || [fr isKindOfClass:UITextField.class] || [fr isKindOfClass:UITextView.class]) {
         [(id<UIKeyInput>)fr insertText:text];
         return @{@"ok": @YES, @"detail": [NSString stringWithFormat:@"insertText on %@", NSStringFromClass(fr.class)]};
