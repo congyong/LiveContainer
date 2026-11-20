@@ -68,8 +68,9 @@ static UIApplication *LCApp(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         SEL sel = NSSelectorFromString(@"sharedApplication");
-        if ([(id)UIApplication respondsToSelector:sel]) {
-            app = ((id (*)(id, SEL))objc_msgSend)((id)UIApplication, sel);
+        Class cls = [UIApplication class];
+        if ([cls respondsToSelector:sel]) {
+            app = ((id (*)(id, SEL))objc_msgSend)((id)cls, sel);
         }
     });
     return app;
