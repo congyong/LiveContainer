@@ -56,7 +56,7 @@ MCP 客户端（Claude / Hermes / …） ──stdio──▶ tools/mcp/lc_mcp.p
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python3 lc_mcp.py
 ```
 
-## 三、工具清单（26 个）
+## 三、工具清单（32 个）
 
 ### 设备 / 安装 / 启动
 
@@ -99,6 +99,17 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python3 lc_m
 | `lc_ui_tab` | `index?` / `name?` | 切底部 Tab（源 / App / 模块 / 设置） |
 | `lc_ui_text` | `text` | 给当前输入框输入文本（先 activate/tap 点中它） |
 | `lc_screenshot` | `window_id?`, `out_path?`, `quality?`, `max_width?` | 截图成 JPEG 存到本机并返回路径；省略 window_id 截整个界面 |
+
+### 界面自测 · guest App 内部（走 LiveProcess 里的 sidecar）
+
+| 工具 | 参数 | 说明 |
+| --- | --- | --- |
+| `lc_guest_info` | — | guest 进程信息：bundleId / pid / 屏幕尺寸 |
+| `lc_guest_tree` | — | guest App 自己的可访问性树（能看到 App 内部按钮） |
+| `lc_guest_activate` | `index?` / `label?` / `identifier?` / `x,y` | 点 guest App 内部元素 |
+| `lc_guest_taps` | `steps[]`, `detect_change?` | guest 内部连续点击，回报每步画面是否变化 |
+| `lc_guest_text` | `text` | 给 guest 内部输入框输入文本 |
+| `lc_guest_screenshot` | `max_width?`, `quality?`, `out_path?` | 截 guest App 自己的画面（不受跨进程合成影响） |
 
 ### 日志
 
@@ -172,6 +183,10 @@ POST   /api/v1/tweakfolders             # {name}
 GET    /api/v1/windows
 POST   /api/v1/windows/{id}/{scale|pip|maximize|close}
 GET    /api/v1/screenshot?windowId=&quality=&maxWidth=
+GET    /api/v1/guest/info                              # 代理到 guest 进程 sidecar(127.0.0.1:8850)
+GET    /api/v1/guest/ui/tree
+POST   /api/v1/guest/ui/{activate|tap|taps|text}
+GET    /api/v1/guest/screenshot?maxWidth=&quality=
 GET    /api/v1/ui/tree
 POST   /api/v1/ui/{activate|tap|tab|text}
 GET    /api/v1/logs?since=&limit=&wait=
@@ -183,7 +198,8 @@ POST   /api/v1/keepalive                # {mode}
 ## 六、已知限制
 
 - 服务只在 **LiveContainer 前台 / 由 audio 保活维持**时在线；被系统挂起时请求会超时。
-- 屏幕截图取的是进程内合成结果；注入型 guest 窗口在部分模式下可能是黑块（内容由系统合成）。
+- 容器侧截图取进程内合成结果，guest 窗口可能是黑块 → 改用 `lc_guest_screenshot`（在 guest 进程内渲染）。
+- guest 内部点击依赖 `lc_launch_app(..., multitask:true)`：非多任务模式下容器进程会让位给 guest，主服务会掉线。
 - `lc_guest_logs` 只覆盖 stderr/stdout（NSLog / printf / Swift print），单独 `os_log()` 的日志不在其中。
 - 启动 guest App 若未保留 App Extensions，会报 `LiveProcess extension not found`（重签时勾选 Keep Extensions）。
 - tweak 必须由设备侧证书重签后才会被加载；`lc_tweak_sign` 的 `changedCount=0` 即代表证书不可用（p12 密码错/过期）。

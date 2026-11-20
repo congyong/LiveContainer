@@ -38,6 +38,8 @@ MCP 客户端（Claude / Hermes / …） ──stdio──▶ tools/mcp/lc_mcp.p
 ```
 
 > 设备侧不引入任何第三方库；MCP 桥是单文件 Python（仅标准库）。完整文档：[docs/MCP.md](docs/MCP.md)
+>
+> guest App 跑在独立进程（LiveProcess），因此里面还有一个只监听 `127.0.0.1:8850` 的 sidecar，由主进程把 `/api/v1/guest/*` 代理过去 —— 这样才能真正点到 App **内部**的按钮、截 App 自己的画面。
 
 ## 快速开始
 
@@ -60,14 +62,15 @@ MCP 客户端（Claude / Hermes / …） ──stdio──▶ tools/mcp/lc_mcp.p
 }
 ```
 
-## MCP 工具（26 个）
+## MCP 工具（32 个）
 
 | 分组 | 工具 |
 | --- | --- |
 | 设备 / 安装 / 启动 | `lc_health` `lc_apps` `lc_install_ipa` `lc_install_from_url` `lc_jobs` `lc_uninstall_app` `lc_launch_app` |
 | Tweak（dylib / framework） | `lc_tweaks` `lc_tweak_import` `lc_tweak_toggle` `lc_tweak_sign` `lc_tweak_delete` `lc_tweak_folder` |
 | 多任务窗口 | `lc_windows` `lc_window_action`（scale / pip / maximize / close） |
-| 界面自测 | `lc_ui_tree` `lc_ui_activate` `lc_ui_tap` `lc_ui_taps`(序列点击) `lc_ui_tab` `lc_ui_text` `lc_screenshot` |
+| 界面自测（容器自身） | `lc_ui_tree` `lc_ui_activate` `lc_ui_tap` `lc_ui_taps`(序列点击) `lc_ui_tab` `lc_ui_text` `lc_screenshot` |
+| 界面自测（guest App 内部） | `lc_guest_info` `lc_guest_tree` `lc_guest_activate` `lc_guest_taps` `lc_guest_text` `lc_guest_screenshot` |
 | 日志 | `lc_logs`（容器自身） `lc_guest_logs`（guest App 与注入 tweak） `lc_guest_logs_clear` |
 | 保活 | `lc_keepalive`（off / audio / screenAwake / audioAndScreen） |
 
