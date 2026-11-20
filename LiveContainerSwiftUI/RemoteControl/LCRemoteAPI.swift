@@ -29,6 +29,9 @@ enum LCRemoteAPI {
 
         do {
             switch (req.method, path) {
+            case ("GET", "/api/v1/self"):
+                return await selfInfo()
+
             case ("GET", "/api/v1/config"):
                 let keepAlive = await MainActor.run { LCRemoteKeepAlive.shared.status }
                 return .json([
@@ -375,6 +378,42 @@ enum LCRemoteAPI {
         }
         LCRemoteKeepAlive.shared.apply(mode)
         return .json(["ok": true, "keepAlive": LCRemoteKeepAlive.shared.status])
+    }
+
+    // MARK: - 自身信息（排查"扩展找不到"这类安装问题）
+
+    @MainActor
+    private static func selfInfo() async -> LCRemoteResponse {
+        let fm = FileManager.default
+        let main = Bundle.main
+        var plugins: [[String: Any]] = []
+        if let dir = main.builtInPlugInsURL {
+            let names = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+            for name in names.sorted() {
+                let url = dir.appendingPathComponent(name)
+                let bundle = Bundle(url: url)
+                let exec = bundle?.executableURL
+                plugins.append([
+                    "name": name,
+                    "bundleId": bundle?.bundleIdentifier ?? "",
+                    "executable": exec?.lastPathComponent ?? "",
+                    "executableExists": exec.map { fm.fileExists(atPath: $0.path) } ?? false
+                ])
+            }
+        }
+        var frameworks: [String] = []
+        if let fwDir = main.privateFrameworksURL {
+            frameworks = ((try? fm.contentsOfDirectory(atPath: fwDir.path)) ?? []).sorted()
+        }
+        return .json([
+            "bundlePath": main.bundlePath,
+            "bundleId": main.bundleIdentifier ?? "",
+            "version": (main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "",
+            "build": (main.infoDictionary?["CFBundleVersion"] as? String) ?? "",
+            "pluginsPath": main.builtInPlugInsURL?.path ?? "",
+            "plugins": plugins,
+            "frameworks": frameworks
+        ])
     }
 
     // MARK: - UI 自动化
