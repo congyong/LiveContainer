@@ -51,7 +51,7 @@ final class LCRemoteControl {
     func stop() {
         server?.stop()
         server = nil
-        LCRemoteKeepAlive.shared.apply(.off)
+        LCRemoteKeepAlive.shared.suspend()
     }
 
     func restart() {

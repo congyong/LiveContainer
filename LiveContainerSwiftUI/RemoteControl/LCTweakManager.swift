@@ -161,21 +161,33 @@ enum LCTweakManager {
 
     // MARK: - 启停 / 删除
 
+    /// 调用方可能传显示名（不带 .disabled）也可能传磁盘名，这里统一解析
+    private static func resolve(_ base: URL, name: String) throws -> (displayName: String, url: URL) {
+        let fm = FileManager.default
+        let stripped = name.hasSuffix(disabledSuffix) ? String(name.dropLast(disabledSuffix.count)) : name
+        var candidates = [name, stripped, stripped + disabledSuffix]
+        var seen = Set<String>()
+        candidates = candidates.filter { seen.insert($0).inserted }
+        for candidate in candidates {
+            let url = base.appendingPathComponent(candidate)
+            if fm.fileExists(atPath: url.path) {
+                return (stripped, url)
+            }
+        }
+        throw LCTweakManagerError.notFound(name)
+    }
+
     static func setEnabled(folder: String?, name: String, enabled: Bool) throws -> LCTweakSummary {
         let base = try folderURL(folder)
         let fm = FileManager.default
-        let displayName = name.hasSuffix(disabledSuffix) ? String(name.dropLast(disabledSuffix.count)) : name
-        let currentURL = base.appendingPathComponent(name)
-        guard fm.fileExists(atPath: currentURL.path) else {
-            throw LCTweakManagerError.notFound(name)
-        }
+        let (displayName, currentURL) = try resolve(base, name: name)
         var isDir: ObjCBool = false
         fm.fileExists(atPath: currentURL.path, isDirectory: &isDir)
         guard !isDir.boolValue || displayName.hasSuffix(".framework") else {
             throw LCTweakManagerError.unsupported("\(displayName) 是 tweak 文件夹，不能启停")
         }
         let targetName = enabled ? displayName : displayName + disabledSuffix
-        if targetName != name {
+        if currentURL.lastPathComponent != targetName {
             try fm.moveItem(at: currentURL, to: base.appendingPathComponent(targetName))
         }
         LCRemoteLogStore.shared.append("tweak \(displayName) -> \(enabled ? "enabled" : "disabled")", src: "api")
@@ -188,13 +200,10 @@ enum LCTweakManager {
 
     static func delete(folder: String?, name: String) throws {
         let base = try folderURL(folder)
-        let url = base.appendingPathComponent(name)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw LCTweakManagerError.notFound(name)
-        }
+        let (displayName, url) = try resolve(base, name: name)
         try FileManager.default.removeItem(at: url)
         if (folder ?? "").isEmpty {
-            DataManager.shared.model.tweakFolderNames.removeAll { $0 == name }
+            DataManager.shared.model.tweakFolderNames.removeAll { $0 == name || $0 == displayName }
         }
         LCRemoteLogStore.shared.append("tweak deleted: \(name)", src: "api")
     }

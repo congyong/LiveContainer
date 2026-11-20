@@ -73,6 +73,13 @@ final class LCRemoteKeepAlive {
         LCRemoteLogStore.shared.append("keepalive -> \(mode.rawValue)", src: "api")
     }
 
+    /// 停服时用：只停音频/屏幕常亮，**不改**用户选的偏好
+    func suspend() {
+        stopAudio()
+        UIApplication.shared.isIdleTimerDisabled = false
+        LCRemoteLogStore.shared.append("keepalive suspended (mode stays \(mode.rawValue))", src: "api")
+    }
+
     func restore() {
         apply(LCRemoteKeepAliveMode.stored)
     }

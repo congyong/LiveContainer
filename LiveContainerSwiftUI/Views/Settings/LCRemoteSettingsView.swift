@@ -16,6 +16,8 @@ struct LCRemoteSettingsView: View {
     @State private var portText: String = ""
     @State private var statusText: String = ""
     @State private var errorText: String?
+    @State private var copiedRecently = false
+    @State private var confirmRegenerate = false
 
     private var keepAliveMode: LCRemoteKeepAliveMode {
         LCRemoteKeepAliveMode.stored
@@ -79,15 +81,21 @@ struct LCRemoteSettingsView: View {
                     .font(.system(.footnote, design: .monospaced))
                     .textSelection(.enabled)
                 HStack {
-                    Button("复制 token") {
+                    Button(copiedRecently ? "已复制" : "复制 token") {
                         UIPasteboard.general.string = token
+                        copiedRecently = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            copiedRecently = false
+                        }
                     }
+                    // Form/List 的一行里多个 Button 不加 borderless 会互相触发
+                    // （以前点"复制"会顺带点到"重新生成"，复制到的 token 立刻失效）
+                    .buttonStyle(.borderless)
                     Spacer()
                     Button("重新生成", role: .destructive) {
-                        token = LCRemoteConfig.regenerateToken()
-                        LCRemoteControl.shared.restart()
-                        refreshStatus()
+                        confirmRegenerate = true
                     }
+                    .buttonStyle(.borderless)
                 }
             } header: {
                 Text("Token")
@@ -96,18 +104,9 @@ struct LCRemoteSettingsView: View {
             }
 
             Section {
-                Text("""
-                curl http://<设备IP>:\(port)/api/v1/health
-                curl -H 'Authorization: Bearer \(token)' \\
-                  http://<设备IP>:\(port)/api/v1/apps
-                curl -H 'Authorization: Bearer \(token)' \\
-                  -F 'file=@app.ipa' \\
-                  http://<设备IP>:\(port)/api/v1/apps
-                curl -H 'Authorization: Bearer \(token)' \\
-                  'http://<设备IP>:\(port)/api/v1/logs?since=0&limit=200'
-                """)
-                .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
+                Text(usageText)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
             } header: {
                 Text("用法")
             }
@@ -119,11 +118,33 @@ struct LCRemoteSettingsView: View {
             }
         }
         .navigationTitle("远程控制")
+        .alert("重新生成 token？", isPresented: $confirmRegenerate) {
+            Button("重新生成", role: .destructive) {
+                token = LCRemoteConfig.regenerateToken()
+                LCRemoteControl.shared.restart()
+                refreshStatus()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("已连上的客户端会立刻失效，需要重新配置。")
+        }
         .onAppear {
             portText = String(port)
             token = LCRemoteConfig.token
             refreshStatus()
         }
+    }
+
+    private var usageText: String {
+        let p = String(port)
+        let t = token
+        return """
+        curl http://<设备IP>:\(p)/api/v1/health
+        curl -H 'Authorization: Bearer \(t)' http://<设备IP>:\(p)/api/v1/apps
+        curl -H 'Authorization: Bearer \(t)' -F 'file=@app.ipa' http://<设备IP>:\(p)/api/v1/apps
+        curl -H 'Authorization: Bearer \(t)' 'http://<设备IP>:\(p)/api/v1/logs?since=0&limit=200'
+        curl -H 'Authorization: Bearer \(t)' -o shot.jpg http://<设备IP>:\(p)/api/v1/screenshot
+        """
     }
 
     private func applyPort() {
