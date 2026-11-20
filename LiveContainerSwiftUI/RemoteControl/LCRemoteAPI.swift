@@ -49,6 +49,28 @@ enum LCRemoteAPI {
                 let bundleId = String(p.dropFirst("/api/v1/apps/".count)).removingPercentEncoding ?? ""
                 return try await uninstall(bundleId: bundleId, keepData: req.query["keepData"] == "1" || req.query["keepData"] == "true")
 
+            case ("POST", let p) where p.hasPrefix("/api/v1/apps/") && p.hasSuffix("/launch"):
+                let bundleId = String(p.dropFirst("/api/v1/apps/".count).dropLast("/launch".count))
+                return try await launch(req, bundleId: bundleId)
+
+            case ("GET", "/api/v1/tweaks"):
+                return try await tweakList(folder: req.query["folder"])
+
+            case ("POST", "/api/v1/tweaks"):
+                return try await tweakImport(req, folder: req.query["folder"])
+
+            case ("PATCH", "/api/v1/tweaks"):
+                return try await tweakSetEnabled(req)
+
+            case ("DELETE", "/api/v1/tweaks"):
+                return try await tweakDelete(req)
+
+            case ("POST", "/api/v1/tweaks/sign"):
+                return try await tweakSign(req)
+
+            case ("POST", "/api/v1/tweakfolders"):
+                return try await tweakCreateFolder(req)
+
             default:
                 return .error("no route for \(req.method) \(path)", status: 404, code: "not_found")
             }
@@ -98,6 +120,92 @@ enum LCRemoteAPI {
             try LCAppInstaller.uninstall(bundleId: bundleId, removeData: !keepData)
         }
         return .json(result)
+    }
+
+    // MARK: - 启动
+
+    @MainActor
+    private static func launch(_ req: LCRemoteRequest, bundleId: String) async throws -> LCRemoteResponse {
+        let model = (DataManager.shared.model.apps + DataManager.shared.model.hiddenApps)
+            .first { $0.appInfo.bundleIdentifier() == bundleId }
+        guard let model else {
+            return .error("未找到应用 \(bundleId)", status: 404, code: "not_found")
+        }
+        let container = req.query["container"].flatMap { $0.isEmpty ? nil : $0 }
+        let urlStr = req.query["url"].flatMap { $0.isEmpty ? nil : $0 }
+        LCRemoteLogStore.shared.append("launch \(bundleId) (container=\(container ?? "-"), url=\(urlStr ?? "-"))", src: "api")
+        do {
+            try await model.runApp(multitask: false, containerFolderName: container, urlStr: urlStr)
+        } catch {
+            return .error("启动失败: \(error.localizedDescription)", status: 500, code: "launch_failed")
+        }
+        return .json(["launched": true, "bundleId": bundleId,
+                      "isAppRunning": model.isAppRunning])
+    }
+
+    // MARK: - Tweaks
+
+    @MainActor
+    private static func tweakList(folder: String?) async throws -> LCRemoteResponse {
+        let items = try LCTweakManager.list(folder: folder)
+        let folders: [String] = DataManager.shared.model.tweakFolderNames
+        return .json(["folder": folder ?? "", "count": items.count,
+                      "tweaks": items.map { $0.json }, "folders": folders])
+    }
+
+    @MainActor
+    private static func tweakImport(_ req: LCRemoteRequest, folder: String?) async throws -> LCRemoteResponse {
+        let upload = try LCRemoteUpload.extract(req)
+        // 导入是 move 语义：内容已落在临时文件，交给 manager 搬走
+        let name = req.query["filename"] ?? upload.filename
+        let summary = try await LCTweakManager.importTweak(from: upload.url, folder: folder, filename: name)
+        return .json(summary.json, status: 201)
+    }
+
+    @MainActor
+    private static func tweakSetEnabled(_ req: LCRemoteRequest) async throws -> LCRemoteResponse {
+        let body = req.bodyData()
+        let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        let name = (obj?["name"] as? String) ?? req.query["name"] ?? ""
+        let enabled: Bool = {
+            if let b = obj?["enabled"] as? Bool { return b }
+            if let s = obj?["enabled"] as? String { return s == "1" || s.lowercased() == "true" }
+            return req.query["enabled"] == "1" || req.query["enabled"] == "true"
+        }()
+        let folder = (obj?["folder"] as? String) ?? req.query["folder"]
+        guard !name.isEmpty else {
+            return .error("需要 name", status: 400, code: "bad_request")
+        }
+        let summary = try LCTweakManager.setEnabled(folder: folder, name: name, enabled: enabled)
+        return .json(summary.json)
+    }
+
+    @MainActor
+    private static func tweakDelete(_ req: LCRemoteRequest) async throws -> LCRemoteResponse {
+        guard let name = req.query["name"], !name.isEmpty else {
+            return .error("需要 name", status: 400, code: "bad_request")
+        }
+        try LCTweakManager.delete(folder: req.query["folder"], name: name)
+        return .json(["deleted": name])
+    }
+
+    @MainActor
+    private static func tweakSign(_ req: LCRemoteRequest) async throws -> LCRemoteResponse {
+        let force = req.query["force"] == "1" || req.query["force"] == "true"
+        try await LCTweakManager.sign(folder: req.query["folder"], force: force)
+        return .json(["signed": true, "folder": req.query["folder"] ?? "", "force": force])
+    }
+
+    @MainActor
+    private static func tweakCreateFolder(_ req: LCRemoteRequest) async throws -> LCRemoteResponse {
+        let body = req.bodyData()
+        let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        let name = (obj?["name"] as? String) ?? req.query["name"] ?? ""
+        guard !name.isEmpty else {
+            return .error("需要 name", status: 400, code: "bad_request")
+        }
+        let created = try LCTweakManager.createFolder(name)
+        return .json(["created": created], status: 201)
     }
 
     // MARK: - 日志
