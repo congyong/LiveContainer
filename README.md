@@ -25,6 +25,62 @@ Crowdin Project: [![Crowdin](https://badges.crowdin.net/livecontainer/localized.
 > Furthermore, please note that we do not provide any support for issues of these third-party builds.
 
 
+# MCP / HTTP 远程控制（`remote-control` 分支）
+
+> **LiveContainer 是开源项目**：上游 [LiveContainer/LiveContainer](https://github.com/LiveContainer/LiveContainer)，许可证 **AGPL-3.0**。
+> 本分支只在其之上增加一层远程控制能力（HTTP API + MCP 桥），全部改动同样以 AGPL-3.0 发布，与上游项目无隶属关系。
+
+在 App 内跑一个带 Bearer 鉴权的 HTTP 服务，把「装包 / 启动 App / 多任务窗口 / 界面点击 / 截图 / tweak 管理 / 日志」
+暴露成接口；再配一个零依赖的 MCP 桥，Claude、Hermes 等 agent 就能直接操控这台 iPhone，做安装、自测、抓日志。
+
+```
+MCP 客户端（Claude / Hermes / …） ──stdio──▶ tools/mcp/lc_mcp.py ──HTTP + Bearer──▶ 设备 :8848（LiveContainer 进程内）
+```
+
+> 设备侧不引入任何第三方库；MCP 桥是单文件 Python（仅标准库）。完整文档：[docs/MCP.md](docs/MCP.md)
+
+## 快速开始
+
+1. 侧载本分支构建出的 ipa（未签名包，用你自己的证书签名；**安装时保留 App Extensions**，否则启动 App 会报 `LiveProcess extension not found`）
+2. App 内：**设置 → 远程控制** → 打开「启用 HTTP 服务」（默认端口 8848，保活建议「静音音频」），复制页面上的 **token**
+3. 电脑侧注册 MCP 桥：
+
+```json
+{
+  "mcpServers": {
+    "livecontainer": {
+      "command": "python3",
+      "args": ["/path/to/tools/mcp/lc_mcp.py"],
+      "env": {
+        "LC_REMOTE_URL": "http://<设备IP>:8848",
+        "LC_REMOTE_TOKEN": "<设置页里的 token>"
+      }
+    }
+  }
+}
+```
+
+## MCP 工具（25 个）
+
+| 分组 | 工具 |
+| --- | --- |
+| 设备 / 安装 / 启动 | `lc_health` `lc_apps` `lc_install_ipa` `lc_install_from_url` `lc_jobs` `lc_uninstall_app` `lc_launch_app` |
+| Tweak（dylib / framework） | `lc_tweaks` `lc_tweak_import` `lc_tweak_toggle` `lc_tweak_sign` `lc_tweak_delete` `lc_tweak_folder` |
+| 多任务窗口 | `lc_windows` `lc_window_action`（scale / pip / maximize / close） |
+| 界面自测 | `lc_ui_tree` `lc_ui_activate` `lc_ui_tap` `lc_ui_tab` `lc_ui_text` `lc_screenshot` |
+| 日志 | `lc_logs`（容器自身） `lc_guest_logs`（guest App 与注入 tweak） `lc_guest_logs_clear` |
+| 保活 | `lc_keepalive`（off / audio / screenAwake / audioAndScreen） |
+
+每个工具的参数、返回结构与 curl 等价用法见 [docs/MCP.md](docs/MCP.md)；MCP 桥源码在 [tools/mcp/lc_mcp.py](tools/mcp/lc_mcp.py)。
+
+## 限制
+
+- 服务只在 LiveContainer 前台、或静音音频保活生效时在线（iOS 挂起会断连）。
+- 远程调试建议 `lc_launch_app(..., multitask: true)`：非多任务启动会让容器进程让位给 guest app，服务会短暂掉线。
+- tweak 需要设备侧证书重签后才会被加载；`lc_tweak_sign` 返回 `changedCount=0` 即代表证书不可用（p12 密码错/过期）。
+- `lc_guest_logs` 覆盖 stderr/stdout（NSLog / printf / Swift print），单独 `os_log()` 的日志不在其中。
+
+
 # Installation
 **LiveContainer comes with a standalone version and a version with built-in SideStore. [Please read the install guide here](https://livecontainer.github.io/docs/installation)**
 
