@@ -131,16 +131,25 @@ enum LCRemoteUIAutomation {
     static func activate(label: String, identifier: String) -> (ok: Bool, detail: String) {
         let wanted = label.lowercased()
         let wantIdent = identifier.lowercased()
+        var tried = 0
+        var lastDetail = ""
         for element in tree() {
             let matched = (!wantIdent.isEmpty && element.identifier.lowercased() == wantIdent)
                 || (!wanted.isEmpty && (element.label.lowercased() == wanted
                                         || element.label.lowercased().contains(wanted)))
-            if matched, let obj = object(for: element.index) {
+            guard matched else { continue }
+            tried += 1
+            if let obj = object(for: element.index) {
                 let r = activate(obj)
                 if r.ok { return r }
+                lastDetail = r.detail
             }
         }
-        return (false, "没找到可激活的 \(label.isEmpty ? identifier : label)")
+        let name = label.isEmpty ? identifier : label
+        if tried == 0 {
+            return (false, "树里没有 \(name)（先 GET /api/v1/ui/tree 看 label）")
+        }
+        return (false, "匹配到 \(tried) 个 \(name)，但都激活不了：\(lastDetail)")
     }
 
     private static func activate(_ obj: NSObject) -> (ok: Bool, detail: String) {
@@ -160,12 +169,30 @@ enum LCRemoteUIAutomation {
                 return r
             }
         }
-        return (false, "\(name) 不支持激活（没有 accessibilityActivate / UIControl）")
+        if !(obj is UIView) {
+            // SwiftUI 的行/按钮常常只以 AccessibilityNode 出现（不是 UIView），
+            // accessibilityActivate 不认，只能按它自己的 frame 中心点一下。
+            let f = obj.accessibilityFrame
+            if f.width > 1, f.height > 1 {
+                let r = tap(x: f.midX, y: f.midY)
+                if r.ok { return (true, r.detail + " (a11y frame center)") }
+                return (false, "a11y 节点不能直接激活，按 frame 点击也失败: \(r.detail)")
+            }
+        }
+        return (false, "\(name) 不支持激活（没有 accessibilityActivate / UIControl，frame 也拿不到）")
     }
 
     private static func activateHit(_ hit: UIView) -> (ok: Bool, detail: String)? {
         var node: UIView? = hit
         while let current = node {
+            if let field = current as? UITextField {
+                field.becomeFirstResponder()
+                return (true, "becomeFirstResponder on \(type(of: current))")
+            }
+            if let textView = current as? UITextView {
+                textView.becomeFirstResponder()
+                return (true, "becomeFirstResponder on \(type(of: current))")
+            }
             if let control = current as? UIControl {
                 control.sendActions(for: .touchUpInside)
                 return (true, "sendActions(.touchUpInside) on \(type(of: current))")

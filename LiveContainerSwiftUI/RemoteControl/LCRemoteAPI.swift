@@ -239,6 +239,11 @@ enum LCRemoteAPI {
 
     @MainActor
     private static func tweakImport(_ req: LCRemoteRequest, folder: String?) async throws -> LCRemoteResponse {
+        let ctype = (req.header("content-type") ?? "").lowercased()
+        if ctype.hasPrefix("application/json") {
+            return .error("POST /api/v1/tweaks 需要 multipart 文件；切换启用状态请用 PATCH /api/v1/tweaks {name,enabled,folder}",
+                          status: 400, code: "bad_request")
+        }
         let upload = try LCRemoteUpload.extract(req)
         // 导入是 move 语义：内容已落在临时文件，交给 manager 搬走
         let name = req.query["filename"] ?? upload.filename
