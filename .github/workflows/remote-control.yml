@@ -1,0 +1,64 @@
+name: Build LiveContainer (remote-control)
+
+on:
+  push:
+    branches: [remote-control]
+  pull_request:
+    branches: [remote-control]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build IPA (unsigned)
+    runs-on: macos-15
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcodebuild -list -project LiveContainer.xcodeproj | head -40
+
+      - name: Install xcpretty
+        run: gem install xcpretty --no-document
+
+      - name: Archive
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project LiveContainer.xcodeproj \
+            -scheme LiveContainer \
+            -configuration Release \
+            -sdk iphoneos \
+            -arch arm64 \
+            -archivePath "$PWD/build/LiveContainer.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | xcpretty
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP=$(find build/LiveContainer.xcarchive/Products/Applications -maxdepth 1 -name "*.app" | head -1)
+          echo "APP=$APP"
+          mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          # 侧载时由 Sideloadly/SideStore/TrollStore 重签，这里只做未签名包
+          (cd out && zip -qry LiveContainer-remote.ipa Payload)
+          ls -lh out/LiveContainer-remote.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveContainer-remote-ipa
+          path: out/LiveContainer-remote.ipa
+          if-no-files-found: error
+
+      - name: Build log tail (on failure)
+        if: failure()
+        run: |
+          echo "=== last 200 lines of xcodebuild output if captured ==="
+          ls -la build 2>/dev/null || true

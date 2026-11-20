@@ -147,6 +147,16 @@ struct LCSettingsView: View {
                     }
                 }
                 
+                Section {
+                    NavigationLink {
+                        LCRemoteSettingsView()
+                    } label: {
+                        Label("远程控制 (HTTP API)", systemImage: "antenna.radiowaves.left.and.right")
+                    }
+                } footer: {
+                    Text("在设备上开一个 HTTP 服务，用 curl / MCP 远程装卸 IPA、查日志。默认关闭。")
+                }
+
                 if #available(iOS 16.1, *) {
                     Section {
                         NavigationLink {

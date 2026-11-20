@@ -31,6 +31,12 @@ import Intents
             LCUtils.appGroupUserDefault.setValue(UIDevice.current.buildVersion, forKey: "LCLastIOSBuildVersion")
         }
         
+        // 远程控制（HTTP API）：默认关闭，设置页开启后启动
+        Task { @MainActor in
+            LCRemoteControl.shared.installLifecycleHooks()
+            LCRemoteControl.shared.startIfEnabled()
+        }
+
         return true
     }
     
