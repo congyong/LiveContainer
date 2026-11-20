@@ -76,7 +76,17 @@ MCP 不放在设备上：设备只出 REST，另在 robo 上放一个零依赖 M
 - 每条记录 `{seq, ts, level, tag, msg}`；`seq` 单调递增，供 `since` 增量拉取；同时落盘 `Documents/RemoteControl/logs.jsonl`（轮转 10MB）。
 - 只读 API 不阻塞业务：ring buffer 用 `os_unfair_lock`，SSE 用后台队列写。
 
-## 分阶段（每阶段都能单独跑起来验证）
+## 已完成（可验证）
+
+- S1 server + token + /health + /apps(GET) + /logs(+长轮询)
+- S2 POST/DELETE /apps（LCAppInstaller，ZSign 签名后进 sharedModel）
+- S3 tweak：GET/POST/PATCH/DELETE /api/v1/tweaks、/tweaks/sign、/tweakfolders（启用=去 `.disabled` 后缀）
+- S4 POST /apps/{id}/launch（LCAppModel.runApp，可指定 container / url）
+- S5 GET /api/v1/windows、POST /api/v1/windows/{id}/{scale|pip|maximize|close}、
+     GET /api/v1/screenshot（JPEG，可指定窗口/质量/最大宽度）
+- MCP 桥 15 个工具：health/apps/install/uninstall/launch/tweaks(5)/logs/windows/window_action/screenshot
+
+## 分阶段（原始计划，保留）
 
 - **S1**：server + token + `/health` + `/apps`(GET) + `/logs` + SSE。目标：`curl` 通，能看日志。
 - **S2**：`LCAppInstaller` 抽取 + `POST /apps` + `DELETE /apps`。目标：`curl -F file=@x.ipa` 装上、卸掉。
