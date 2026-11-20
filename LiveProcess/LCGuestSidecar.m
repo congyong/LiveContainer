@@ -23,8 +23,14 @@
 #import <arpa/inet.h>
 #import <unistd.h>
 #import <CommonCrypto/CommonDigest.h>
+#import <objc/message.h>
 
 static const int kLCGuestSidecarPort = 8850;
+
+// 扩展里 UIKit 没把 accessibilityIdentifier 放进 NSObject 的可见接口，这里补个声明
+@interface NSObject (LCGuestA11y)
+- (NSString *)accessibilityIdentifier;
+@end
 
 // ── 小工具 ──────────────────────────────────────────────────────────────────
 
@@ -54,6 +60,19 @@ static NSData *LCBinary(NSData *body, NSString *contentType, int status) {
     [resp appendData:[head dataUsingEncoding:NSUTF8StringEncoding]];
     [resp appendData:body];
     return resp;
+}
+
+// App Extension 里 UIApplication.sharedApplication 被标成 unavailable，动态取实例
+static UIApplication *LCApp(void) {
+    static UIApplication *app = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        SEL sel = NSSelectorFromString(@"sharedApplication");
+        if ([(id)UIApplication respondsToSelector:sel]) {
+            app = ((id (*)(id, SEL))objc_msgSend)((id)UIApplication, sel);
+        }
+    });
+    return app;
 }
 
 static NSURL *LCGroupURL(void) {
@@ -115,7 +134,7 @@ static void LCWalk(id obj, NSMutableArray *out, NSMutableSet *visited, NSUIntege
 static NSArray<NSObject *> *LCCollect(void) {
     NSMutableArray *out = [NSMutableArray array];
     NSMutableSet *visited = [NSMutableSet set];
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+    for (UIScene *scene in LCApp().connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
         for (UIWindow *w in ((UIWindowScene *)scene).windows) {
             LCWalk(w, out, visited, 0);
@@ -149,13 +168,13 @@ static NSDictionary *LCDescribe(NSObject *o) {
 // ── 动作 ────────────────────────────────────────────────────────────────────
 
 static UIWindow *LCKeyWindow(void) {
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+    for (UIScene *scene in LCApp().connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
         for (UIWindow *w in ((UIWindowScene *)scene).windows) {
             if (w.isKeyWindow) return w;
         }
     }
-    return UIApplication.sharedApplication.windows.firstObject;
+    return LCApp().windows.firstObject;
 }
 
 static NSDictionary *LCTap(CGFloat x, CGFloat y);
@@ -203,7 +222,7 @@ static NSDictionary *LCActivateHit(UIView *hit) {
 
 static NSDictionary *LCTap(CGFloat x, CGFloat y) {
     CGPoint p = CGPointMake(x, y);
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+    for (UIScene *scene in LCApp().connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
         for (UIWindow *w in ((UIWindowScene *)scene).windows) {
             if (!CGRectContainsPoint(w.bounds, p)) continue;
@@ -247,7 +266,7 @@ static NSDictionary *LCActivateSpec(NSDictionary *spec) {
 static NSDictionary *LCTextInput(NSString *text) {
     UIView *fr = nil;
     NSMutableArray<UIView *> *stack = [NSMutableArray array];
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+    for (UIScene *scene in LCApp().connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
         for (UIWindow *w in ((UIWindowScene *)scene).windows) [stack addObject:w];
     }
