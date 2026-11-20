@@ -403,7 +403,7 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
         }
         dispatch_semaphore_signal(sem);
     });
-    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 60ull * NSEC_PER_SEC));
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 20ull * NSEC_PER_SEC));
     return result ?: LCJSON(@{@"ok": @NO, @"error": @"timeout"}, 500, nil);
 }
 
@@ -464,6 +464,7 @@ static void LCServeConnection(int fd) {  // 需要 #include <sys/time.h>
     }
 
     NSData *body = buf.length > headerLen ? [buf subdataWithRange:NSMakeRange(headerLen, buf.length - headerLen)] : [NSData data];
+    fprintf(stderr, "[LCGuestSidecar] %s %s\n", method.UTF8String, path.UTF8String);
     NSData *resp = LCHandleRequest(method, path, headers, body);
 
     const uint8_t *bytes = resp.bytes;
@@ -489,18 +490,30 @@ void LCGuestSidecarStart(void) {
         addr.sin_family = AF_INET;
         addr.sin_port = htons(kLCGuestSidecarPort);
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) { close(fd); return; }
-        if (listen(fd, 16) != 0) { close(fd); return; }
+        if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+            fprintf(stderr, "[LCGuestSidecar] bind failed: %s\n", strerror(errno));
+            close(fd);
+            return;
+        }
+        if (listen(fd, 16) != 0) {
+            fprintf(stderr, "[LCGuestSidecar] listen failed: %s\n", strerror(errno));
+            close(fd);
+            return;
+        }
 
-        dispatch_queue_t q = dispatch_queue_create("lc.guest.sidecar", DISPATCH_QUEUE_SERIAL);
-        dispatch_async(q, ^{
+        // accept 循环必须和"处理连接"分开两个队列：如果都用同一个串行队列，
+        // accept 循环永不返回，处理块永远排不上（真机表现就是请求挂到超时）。
+        dispatch_queue_t acceptQ = dispatch_queue_create("lc.guest.sidecar.accept", DISPATCH_QUEUE_SERIAL);
+        dispatch_queue_t workQ = dispatch_queue_create("lc.guest.sidecar.work", DISPATCH_QUEUE_CONCURRENT);
+        dispatch_async(acceptQ, ^{
+            fprintf(stderr, "[LCGuestSidecar] listening on 127.0.0.1:%d\n", kLCGuestSidecarPort);
             while (true) {
                 int client = accept(fd, NULL, NULL);
                 if (client < 0) continue;
                 struct timeval tv = { 10, 0 };
                 setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
                 setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-                dispatch_async(q, ^{ LCServeConnection(client); });
+                dispatch_async(workQ, ^{ LCServeConnection(client); });
             }
         });
     });
