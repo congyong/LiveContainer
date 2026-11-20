@@ -147,13 +147,16 @@ enum LCRemoteAPI {
         }
         let container = req.query["container"].flatMap { $0.isEmpty ? nil : $0 }
         let urlStr = req.query["url"].flatMap { $0.isEmpty ? nil : $0 }
+        // multitask=1 → 在 LiveContainer 内的多任务窗口里跑，主 UI 不退，HTTP 服务不会跟着挂起
+        let multitask: Bool? = req.query["multitask"].map { $0 == "1" || $0.lowercased() == "true" }
         LCRemoteLogStore.shared.append("launch \(bundleId) (container=\(container ?? "-"), url=\(urlStr ?? "-"))", src: "api")
         do {
-            try await model.runApp(multitask: false, containerFolderName: container, urlStr: urlStr)
+            try await model.runApp(multitask: multitask, containerFolderName: container, urlStr: urlStr)
         } catch {
             return .error("启动失败: \(error.localizedDescription)", status: 500, code: "launch_failed")
         }
         return .json(["launched": true, "bundleId": bundleId,
+                      "multitask": multitask.map { $0 } ?? NSNull(),
                       "isAppRunning": model.isAppRunning])
     }
 

@@ -56,6 +56,7 @@ final class LCRemoteKeepAlive {
 
     private var player: AVAudioPlayer?
     private var interruptionObserver: NSObjectProtocol?
+    private var watchdog: Timer?
     private(set) var mode: LCRemoteKeepAliveMode = .off
 
     private init() {}
@@ -66,8 +67,10 @@ final class LCRemoteKeepAlive {
 
         if mode.usesAudio {
             startAudio()
+            startWatchdog()
         } else {
             stopAudio()
+            stopWatchdog()
         }
         UIApplication.shared.isIdleTimerDisabled = mode.keepsScreenOn
         LCRemoteLogStore.shared.append("keepalive -> \(mode.rawValue)", src: "api")
@@ -76,6 +79,7 @@ final class LCRemoteKeepAlive {
     /// 停服时用：只停音频/屏幕常亮，**不改**用户选的偏好
     func suspend() {
         stopAudio()
+        stopWatchdog()
         UIApplication.shared.isIdleTimerDisabled = false
         LCRemoteLogStore.shared.append("keepalive suspended (mode stays \(mode.rawValue))", src: "api")
     }
@@ -124,6 +128,29 @@ final class LCRemoteKeepAlive {
         } catch {
             LCRemoteLogStore.shared.append("keepalive audio failed: \(error.localizedDescription)", src: "api")
         }
+    }
+
+    /// guest app 启动/其音频抢占 session 时，播放器可能被静默停掉而不触发 interruption 回调，
+    /// 所以每 10s 自检一次，确保还在播。
+    private func startWatchdog() {
+        stopWatchdog()
+        let t = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.mode.usesAudio else { return }
+                if self.player?.isPlaying != true {
+                    LCRemoteLogStore.shared.append("keepalive watchdog: audio stopped, restarting", src: "api")
+                    self.restartAudio()
+                } else {
+                    try? AVAudioSession.sharedInstance().setActive(true)
+                }
+            }
+        }
+        watchdog = t
+    }
+
+    private func stopWatchdog() {
+        watchdog?.invalidate()
+        watchdog = nil
     }
 
     private func restartAudio() {
