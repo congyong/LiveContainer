@@ -71,6 +71,15 @@ enum LCRemoteAPI {
             case ("POST", "/api/v1/tweakfolders"):
                 return try await tweakCreateFolder(req)
 
+            case ("GET", "/api/v1/windows"):
+                return await windowList()
+
+            case ("POST", let p) where p.hasPrefix("/api/v1/windows/"):
+                return try await windowAction(req, path: p)
+
+            case ("GET", "/api/v1/screenshot"):
+                return await screenshot(req)
+
             default:
                 return .error("no route for \(req.method) \(path)", status: 404, code: "not_found")
             }
@@ -206,6 +215,79 @@ enum LCRemoteAPI {
         }
         let created = try LCTweakManager.createFolder(name)
         return .json(["created": created], status: 201)
+    }
+
+    // MARK: - 多任务窗口 / 截图
+
+    @MainActor
+    private static func windowList() async -> LCRemoteResponse {
+        let infos = LCWindowManager.windows()
+        return .json(["count": infos.count, "windows": infos.map { $0.json }])
+    }
+
+    /// POST /api/v1/windows/{id}/{scale|pip|maximize|close}
+    /// 参数走 query 或 JSON body：scale=<0.4-3.0>, enabled=true/false
+    @MainActor
+    private static func windowAction(_ req: LCRemoteRequest, path: String) async throws -> LCRemoteResponse {
+        let rest = String(path.dropFirst("/api/v1/windows/".count))
+        let parts = rest.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else {
+            return .error("用法: /api/v1/windows/{id}/scale|pip|maximize|close", status: 400, code: "bad_request")
+        }
+        let id = parts[0].removingPercentEncoding ?? parts[0]
+        let action = parts[1]
+        let body = req.bodyData()
+        let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+
+        func boolValue(_ key: String, default def: Bool) -> Bool {
+            if let b = obj?[key] as? Bool { return b }
+            if let s = obj?[key] as? String { return s == "1" || s.lowercased() == "true" }
+            if let q = req.query[key] { return q == "1" || q.lowercased() == "true" }
+            return def
+        }
+        func doubleValue(_ key: String) -> Double? {
+            if let d = obj?[key] as? Double { return d }
+            if let s = obj?[key] as? String { return Double(s) }
+            if let q = req.query[key] { return Double(q) }
+            return nil
+        }
+
+        do {
+            switch action {
+            case "scale":
+                guard let v = doubleValue("scale") ?? doubleValue("value") else {
+                    return .error("scale 需要数值", status: 400, code: "bad_request")
+                }
+                try LCWindowManager.setScale(id, CGFloat(v))
+            case "pip":
+                try LCWindowManager.setPiP(id, enabled: boolValue("enabled", default: true))
+            case "maximize":
+                try LCWindowManager.setMaximized(id, maximized: boolValue("enabled", default: true))
+            case "close":
+                try LCWindowManager.close(id)
+            default:
+                return .error("未知动作 \(action)", status: 400, code: "bad_request")
+            }
+        } catch {
+            return .error(error.localizedDescription, status: 400, code: "window_action_failed")
+        }
+        let infos = LCWindowManager.windows()
+        return .json(["ok": true, "action": action, "id": id,
+                      "windows": infos.map { $0.json }])
+    }
+
+    @MainActor
+    private static func screenshot(_ req: LCRemoteRequest) async -> LCRemoteResponse {
+        let windowId = req.query["windowId"] ?? req.query["id"]
+        let quality = min(max((Double(req.query["quality"] ?? "70") ?? 70) / 100.0, 0.1), 1.0)
+        let maxWidth = CGFloat(Double(req.query["maxWidth"] ?? "1290") ?? 1290)
+        guard let data = LCScreenshot.capture(windowId: windowId, maxWidth: maxWidth, quality: CGFloat(quality)) else {
+            return .error("截图失败（窗口不可见或视图为空）", status: 500, code: "capture_failed")
+        }
+        return LCRemoteResponse(status: 200,
+                                headers: ["Content-Type": "image/jpeg",
+                                          "X-Window-Id": windowId ?? "key"],
+                                body: data)
     }
 
     // MARK: - 日志
