@@ -30,11 +30,16 @@ enum LCRemoteAPI {
         do {
             switch (req.method, path) {
             case ("GET", "/api/v1/config"):
+                let keepAlive = await MainActor.run { LCRemoteKeepAlive.shared.status }
                 return .json([
                     "enabled": LCRemoteConfig.isEnabled,
                     "port": Int(LCRemoteConfig.port),
+                    "keepAlive": keepAlive,
                     "apps": await MainActor.run { DataManager.shared.model.apps.count }
                 ])
+
+            case ("POST", "/api/v1/keepalive"):
+                return await keepAlive(req)
 
             case ("GET", "/api/v1/apps"):
                 return try await listApps()
@@ -288,6 +293,21 @@ enum LCRemoteAPI {
                                 headers: ["Content-Type": "image/jpeg",
                                           "X-Window-Id": windowId ?? "key"],
                                 body: data)
+    }
+
+    // MARK: - 保活
+
+    @MainActor
+    private static func keepAlive(_ req: LCRemoteRequest) async -> LCRemoteResponse {
+        let body = req.bodyData()
+        let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        let raw = (obj?["mode"] as? String) ?? req.query["mode"]
+        guard let raw, let mode = LCRemoteKeepAliveMode(rawValue: raw) else {
+            let allowed = LCRemoteKeepAliveMode.allCases.map { $0.rawValue }
+            return .error("mode 必须是 \(allowed.joined(separator: " / "))", status: 400, code: "bad_request")
+        }
+        LCRemoteKeepAlive.shared.apply(mode)
+        return .json(["ok": true, "keepAlive": LCRemoteKeepAlive.shared.status])
     }
 
     // MARK: - 日志

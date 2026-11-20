@@ -43,12 +43,15 @@ final class LCRemoteControl {
         try srv.start(port: LCRemoteConfig.port)
         server = srv
         lastError = nil
+        // 服务起来后按设置恢复保活（静音音频 / 屏幕常亮）
+        LCRemoteKeepAlive.shared.restore()
         LCRemoteLogStore.shared.append("remote control started on :\(LCRemoteConfig.port)", src: "api")
     }
 
     func stop() {
         server?.stop()
         server = nil
+        LCRemoteKeepAlive.shared.apply(.off)
     }
 
     func restart() {

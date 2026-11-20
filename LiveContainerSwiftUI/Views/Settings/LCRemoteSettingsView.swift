@@ -17,6 +17,18 @@ struct LCRemoteSettingsView: View {
     @State private var statusText: String = ""
     @State private var errorText: String?
 
+    private var keepAliveMode: LCRemoteKeepAliveMode {
+        LCRemoteKeepAliveMode.stored
+    }
+
+    private var keepAliveBinding: Binding<LCRemoteKeepAliveMode> {
+        Binding(get: { LCRemoteKeepAliveMode.stored },
+                set: { newValue in
+                    LCRemoteKeepAlive.shared.apply(newValue)
+                    refreshStatus()
+                })
+    }
+
     var body: some View {
         Form {
             Section {
@@ -48,6 +60,18 @@ struct LCRemoteSettingsView: View {
                 Text("远程控制")
             } footer: {
                 Text("服务只在 LiveContainer 处于前台时保持监听；切到后台后 iOS 会挂起进程，请求会超时。\n端口范围 1024–65535，改端口后自动重启服务。")
+            }
+
+            Section {
+                Picker("保活方式", selection: keepAliveBinding) {
+                    ForEach(LCRemoteKeepAliveMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+            } header: {
+                Text("后台保活")
+            } footer: {
+                Text("iOS 挂起进程时 socket 会断。\"静音音频\"靠 UIBackgroundModes: audio 让进程锁屏后继续跑（耗电，且可能与 guest app 音频混流）；\"屏幕常亮\"配合\"引导式访问\"(设置 → 辅助功能) 是最省心的长期挂机方案。")
             }
 
             Section {
