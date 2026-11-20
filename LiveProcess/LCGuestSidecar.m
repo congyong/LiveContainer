@@ -343,15 +343,34 @@ static UIImage *LCSnapshot(CGFloat maxWidth) {
     return img;
 }
 
-static NSString *LCScreenHash(void) {
-    UIImage *img = LCSnapshot(96);
-    NSData *d = UIImageJPEGRepresentation(img, 0.3);
-    if (!d) return @"";
-    unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {0};
-    CC_SHA256(d.bytes, (CC_LONG)d.length, digest);
-    NSMutableString *s = [NSMutableString string];
-    for (int i = 0; i < 8; i++) [s appendFormat:@"%02x", digest[i]];
-    return s;
+// 把画面缩到 48x96 的灰度图，便于做像素级差异比较
+static NSData *LCGrayThumb(void) {
+    UIImage *img = LCSnapshot(600);
+    if (!img) return nil;
+    const size_t W = 48, H = 96;
+    unsigned char *buf = calloc(W * H, 1);
+    if (!buf) return nil;
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceGray();
+    CGContextRef ctx = CGBitmapContextCreate(buf, W, H, 8, W, cs, kCGImageAlphaNone);
+    CGColorSpaceRelease(cs);
+    if (!ctx) { free(buf); return nil; }
+    UIGraphicsPushContext(ctx);
+    [img drawInRect:CGRectMake(0, 0, W, H)];
+    UIGraphicsPopContext();
+    CGContextRelease(ctx);
+    NSData *d = [NSData dataWithBytesNoCopy:buf length:W * H freeWhenDone:YES];
+    return d;
+}
+
+// 两张灰度缩略图的差异比例（0~1）；比"哈希是否相等"更能反映细微变化
+static double LCDiffRatio(NSData *a, NSData *b) {
+    if (!a || !b || a.length != b.length || a.length == 0) return a == b ? 0.0 : 1.0;
+    const unsigned char *pa = a.bytes, *pb = b.bytes;
+    NSUInteger changed = 0;
+    for (NSUInteger i = 0; i < a.length; i++) {
+        if (abs((int)pa[i] - (int)pb[i]) > 8) changed++;
+    }
+    return (double)changed / (double)a.length;
 }
 
 // ── 请求处理 ────────────────────────────────────────────────────────────────
@@ -408,14 +427,17 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
             BOOL detect = spec[@"detectChange"] ? [spec[@"detectChange"] boolValue] : YES;
             NSMutableArray *out = [NSMutableArray array];
             for (NSDictionary *step in steps ?: @[]) {
-                NSString *before = detect ? LCScreenHash() : @"";
+                NSData *before = detect ? LCGrayThumb() : nil;
                 NSDictionary *r = [step isKindOfClass:NSDictionary.class] ? LCActivateSpec(step)
                                                                           : @{@"ok": @NO, @"detail": @"step 不是对象"};
                 NSInteger delay = step[@"delayMs"] ? [step[@"delayMs"] integerValue] : 400;
                 if (delay > 0) [NSThread sleepForTimeInterval:delay / 1000.0];
-                NSString *after = detect ? LCScreenHash() : @"";
                 NSMutableDictionary *item = [@{@"ok": r[@"ok"] ?: @NO, @"detail": r[@"detail"] ?: @""} mutableCopy];
-                if (detect) item[@"changed"] = @(![before isEqualToString:after]);
+                if (detect) {
+                    double ratio = LCDiffRatio(before, LCGrayThumb());
+                    item[@"changed"] = @(ratio > 0.002);   // 0.2% 像素变化就算变了
+                    item[@"diff"] = @(round(ratio * 10000) / 10000.0);
+                }
                 [out addObject:item];
             }
             result = LCJSON(@{@"ok": @YES, @"count": @(out.count), @"steps": out}, 200, nil);
