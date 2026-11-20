@@ -17,8 +17,15 @@ concurrency:
 jobs:
   build:
     name: Build IPA (unsigned)
-    runs-on: macos-15
+    runs-on: xcode-27
     steps:
+      # 上游用的就是这套：macos-15 的 Xcode 16.4（iOS 18.5 SDK）编不过
+      # （LCWebView 用了 iOS 26 的 glassEffect），必须 Xcode 26+。
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '27.2'
+
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
@@ -69,6 +76,18 @@ jobs:
           name: LiveContainer-remote-ipa
           path: out/LiveContainer-remote.ipa
           if-no-files-found: error
+
+      # artifact 下载要鉴权；挂到 rolling release 上就能匿名 curl 下来
+      - name: Publish IPA to rolling release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: rc-latest
+          name: remote-control latest
+          body: "构建自 ${{ github.sha }}（branch remote-control），未签名 IPA，侧载时再用 Sideloadly/SideStore/TrollStore 签名。"
+
+          prerelease: true
+          files: out/LiveContainer-remote.ipa
 
       # ── 把结果写进 ci-logs 分支 ─────────────────────────────────────────
       # 这台开发机（与 CI 同一出口 IP）的 api.github.com 匿名额度经常打满，
