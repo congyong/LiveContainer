@@ -257,12 +257,26 @@ enum LCRemoteUIAutomation {
             textField.text = (textField.text ?? "") + text
             return (true, "set text on UITextField")
         }
+        // UISearchBar 自己成为第一响应者时不是 UIKeyInput，但内部有 UITextField
+        if let view = responder as? UIView, let input = findTextInput(in: view) {
+            input.insertText(text)
+            return (true, "insertText on \(type(of: input))（从 \(type(of: responder)) 里找到）")
+        }
         return (false, "\(type(of: responder)) 不接受文本输入")
     }
 
     private static func firstResponder() -> UIResponder? {
         for window in windows() {
             if let r = findFirstResponder(in: window) { return r }
+        }
+        return nil
+    }
+
+    private static func findTextInput(in view: UIView) -> UIKeyInput? {
+        if let input = view as? UITextField { return input }
+        if let input = view as? UITextView { return input }
+        for sub in view.subviews {
+            if let r = findTextInput(in: sub) { return r }
         }
         return nil
     }

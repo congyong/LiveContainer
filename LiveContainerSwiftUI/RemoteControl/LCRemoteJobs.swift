@@ -49,6 +49,16 @@ final class LCRemoteJobs {
 
     private init() {}
 
+    /// 默认 URLSession 的 timeoutIntervalForRequest 是 60s，18MB 的 ipa 在手机网络上
+    /// 经常超时（真机实测 "请求超时"）。这里给下载单独一个长超时、可等网络的 session。
+    static let downloadSession: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 600
+        cfg.timeoutIntervalForResource = 3600
+        cfg.waitsForConnectivity = true
+        return URLSession(configuration: cfg)
+    }()
+
     func create(kind: String) -> LCRemoteJob {
         let job = LCRemoteJob(kind: kind)
         jobs[job.id] = job
@@ -86,7 +96,7 @@ final class LCRemoteJobs {
             return
         }
         do {
-            let (tmpURL, response) = try await URLSession.shared.download(from: url)
+            let (tmpURL, response) = try await LCRemoteJobs.downloadSession.download(from: url)
             if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
                 finish(job, error: "下载失败 HTTP \(http.statusCode)")
                 return
