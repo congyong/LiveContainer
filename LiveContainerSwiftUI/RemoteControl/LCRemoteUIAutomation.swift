@@ -54,112 +54,72 @@ enum LCRemoteUIAutomation {
             .filter { !$0.isHidden && $0.alpha > 0.01 }
     }
 
-    static func tree() -> [LCRemoteUIElement] {
-        var out: [LCRemoteUIElement] = []
+    /// 单一遍历入口：tree() 和 activate(index:) 必须用同一套顺序，index 才对得上。
+    /// 用 ObjectIdentifier 去重 —— 同一批 SwiftUI 节点会同时出现在 view.subviews 和
+    /// accessibilityElements 里，不去重会出现同一个 label 重复 4 次、600 上限被瞬间打满。
+    private static func collect() -> [NSObject] {
+        var out: [NSObject] = []
+        var visited = Set<ObjectIdentifier>()
         for window in windows() {
-            walkView(window, depth: 0, into: &out)
-            if let elements = window.accessibilityElements as? [Any] {
-                walkAccessibilityObjects(elements, depth: 1, into: &out)
-            }
+            walk(window, depth: 0, visited: &visited, into: &out)
         }
         return out
     }
 
-    private static func describe(_ obj: Any) -> (label: String, ident: String, value: String, frame: CGRect, activatable: Bool, cls: String)? {
-        guard let ns = obj as? NSObject else { return nil }
-        let label = ns.accessibilityLabel ?? ""
-        let ident = (ns as? UIAccessibilityIdentification)?.accessibilityIdentifier ?? ""
-        let value = ns.accessibilityValue ?? ""
-        var frame = CGRect.zero
+    private static func isInteresting(_ ns: NSObject) -> Bool {
+        if !(ns.accessibilityLabel ?? "").isEmpty { return true }
+        if !(((ns as? UIAccessibilityIdentification)?.accessibilityIdentifier) ?? "").isEmpty { return true }
+        if !(ns.accessibilityValue ?? "").isEmpty { return true }
+        if ns is UIControl { return true }
+        return ns.accessibilityTraits.contains(.button) || ns.accessibilityTraits.contains(.link)
+    }
+
+    private static func walk(_ obj: Any, depth: Int, visited: inout Set<ObjectIdentifier>, into out: inout [NSObject]) {
+        guard out.count < maxNodes, depth <= maxDepth, let ns = obj as? NSObject else { return }
+        guard visited.insert(ObjectIdentifier(ns)).inserted else { return }
+
+        if isInteresting(ns) { out.append(ns) }
+
         if let view = ns as? UIView {
-            frame = view.convert(view.bounds, to: nil)
-        } else {
-            frame = ns.accessibilityFrame
+            guard !view.isHidden, view.alpha > 0.01 else { return }
+            for sub in view.subviews { walk(sub, depth: depth + 1, visited: &visited, into: &out) }
         }
-        let activatable = ns.accessibilityTraits.contains(.button)
-            || ns.accessibilityTraits.contains(.link)
-            || ns.accessibilityTraits.contains(.tabBar)
-            || ns is UIControl
-        guard !(label.isEmpty && ident.isEmpty && value.isEmpty && frame.isEmpty) else { return nil }
-        return (label, ident, value, frame, activatable, String(describing: type(of: ns)))
-    }
-
-    private static func walkView(_ view: UIView, depth: Int, into out: inout [LCRemoteUIElement]) {
-        guard out.count < maxNodes, depth <= maxDepth else { return }
-        guard !view.isHidden, view.alpha > 0.01 else { return }
-
-        if let info = describe(view) {
-            out.append(LCRemoteUIElement(index: out.count,
-                                         label: info.label, identifier: info.ident,
-                                         value: info.value, className: info.cls,
-                                         frame: info.frame,
-                                         isControl: view is UIControl,
-                                         canActivate: info.activatable,
-                                         depth: depth))
-        }
-        if let elements = view.accessibilityElements as? [Any], !elements.isEmpty {
-            walkAccessibilityObjects(elements, depth: depth + 1, into: &out)
-        }
-        for sub in view.subviews {
-            walkView(sub, depth: depth + 1, into: &out)
+        if let elements = ns.accessibilityElements as? [Any] {
+            for element in elements { walk(element, depth: depth + 1, visited: &visited, into: &out) }
         }
     }
 
-    private static func walkAccessibilityObjects(_ objs: [Any], depth: Int, into out: inout [LCRemoteUIElement]) {
-        for obj in objs {
-            guard out.count < maxNodes, depth <= maxDepth else { return }
-            if let view = obj as? UIView {
-                walkView(view, depth: depth, into: &out)
-                continue
+    static func tree() -> [LCRemoteUIElement] {
+        var out: [LCRemoteUIElement] = []
+        for (index, ns) in collect().enumerated() {
+            let label = ns.accessibilityLabel ?? ""
+            let ident = (ns as? UIAccessibilityIdentification)?.accessibilityIdentifier ?? ""
+            let value = ns.accessibilityValue ?? ""
+            var frame = CGRect.zero
+            if let view = ns as? UIView {
+                frame = view.convert(view.bounds, to: nil)
+            } else {
+                frame = ns.accessibilityFrame
             }
-            guard let info = describe(obj) else { continue }
-            out.append(LCRemoteUIElement(index: out.count,
-                                         label: info.label, identifier: info.ident,
-                                         value: info.value, className: info.cls,
-                                         frame: info.frame, isControl: false,
-                                         canActivate: info.activatable, depth: depth))
-            if let ns = obj as? NSObject, let children = ns.accessibilityElements as? [Any], !children.isEmpty {
-                walkAccessibilityObjects(children, depth: depth + 1, into: &out)
-            }
+            let activatable = ns is UIControl
+                || ns.accessibilityTraits.contains(.button)
+                || ns.accessibilityTraits.contains(.link)
+                || ns.accessibilityTraits.contains(.tabBar)
+            out.append(LCRemoteUIElement(index: index, label: label, identifier: ident,
+                                         value: value, className: String(describing: type(of: ns)),
+                                         frame: frame, isControl: ns is UIControl,
+                                         canActivate: activatable, depth: 0))
         }
+        return out
     }
 
     // MARK: - 激活
 
     private static func object(for index: Int) -> NSObject? {
-        var all: [NSObject] = []
-        for window in windows() {
-            collectViewObjects(window, into: &all)
-            if let elements = window.accessibilityElements as? [Any] {
-                collectA11yObjects(elements, into: &all)
-            }
-        }
+        let all = collect()
         guard index >= 0, index < all.count else { return nil }
         return all[index]
     }
-
-    private static func collectViewObjects(_ view: UIView, into out: inout [NSObject]) {
-        guard out.count < maxNodes else { return }
-        guard !view.isHidden, view.alpha > 0.01 else { return }
-        if describe(view) != nil { out.append(view) }
-        if let elements = view.accessibilityElements as? [Any], !elements.isEmpty {
-            collectA11yObjects(elements, into: &out)
-        }
-        for sub in view.subviews { collectViewObjects(sub, into: &out) }
-    }
-
-    private static func collectA11yObjects(_ objs: [Any], into out: inout [NSObject]) {
-        for obj in objs {
-            guard out.count < maxNodes else { return }
-            if let view = obj as? UIView { collectViewObjects(view, into: &out); continue }
-            guard let ns = obj as? NSObject, describe(ns) != nil else { continue }
-            out.append(ns)
-            if let children = ns.accessibilityElements as? [Any], !children.isEmpty {
-                collectA11yObjects(children, into: &out)
-            }
-        }
-    }
-
     /// 按 index 激活；index 来自 /ui/tree
     static func activate(index: Int) -> (ok: Bool, detail: String) {
         guard let obj = object(for: index) else {
