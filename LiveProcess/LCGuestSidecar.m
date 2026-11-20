@@ -343,34 +343,46 @@ static UIImage *LCSnapshot(CGFloat maxWidth) {
     return img;
 }
 
-// 把画面缩到 48x96 的灰度图，便于做像素级差异比较
+// 把画面缩到 48x96 的缩略图（走 UIGraphicsImageRenderer + RGBA 位图，
+// 之前用 CGBitmapContextCreate(灰度) 在真机上拿到的全是 0，导致 diff 永远是 0）
 static NSData *LCGrayThumb(void) {
-    UIImage *img = LCSnapshot(600);
+    UIImage *img = LCSnapshot(220);
     if (!img) return nil;
-    const size_t W = 48, H = 96;
-    unsigned char *buf = calloc(W * H, 1);
+    const CGFloat W = 48, H = 96;
+    UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat defaultFormat];
+    fmt.scale = 1;
+    fmt.opaque = YES;
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(W, H) format:fmt];
+    UIImage *small = [r imageWithActions:^(UIGraphicsImageRendererContext *c) {
+        [img drawInRect:CGRectMake(0, 0, W, H)];
+    }];
+    CGImageRef cg = small.CGImage;
+    if (!cg) return nil;
+    size_t w = CGImageGetWidth(cg), h = CGImageGetHeight(cg);
+    if (w == 0 || h == 0) return nil;
+    unsigned char *buf = calloc(w * h * 4, 1);
     if (!buf) return nil;
-    CGColorSpaceRef cs = CGColorSpaceCreateDeviceGray();
-    CGContextRef ctx = CGBitmapContextCreate(buf, W, H, 8, W, cs, kCGImageAlphaNone);
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(buf, w, h, 8, w * 4, cs, kCGImageAlphaPremultipliedLast);
     CGColorSpaceRelease(cs);
     if (!ctx) { free(buf); return nil; }
-    UIGraphicsPushContext(ctx);
-    [img drawInRect:CGRectMake(0, 0, W, H)];
-    UIGraphicsPopContext();
+    CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), cg);
     CGContextRelease(ctx);
-    NSData *d = [NSData dataWithBytesNoCopy:buf length:W * H freeWhenDone:YES];
-    return d;
+    return [NSData dataWithBytesNoCopy:buf length:w * h * 4 freeWhenDone:YES];
 }
 
 // 两张灰度缩略图的差异比例（0~1）；比"哈希是否相等"更能反映细微变化
 static double LCDiffRatio(NSData *a, NSData *b) {
     if (!a || !b || a.length != b.length || a.length == 0) return a == b ? 0.0 : 1.0;
     const unsigned char *pa = a.bytes, *pb = b.bytes;
-    NSUInteger changed = 0;
-    for (NSUInteger i = 0; i < a.length; i++) {
-        if (abs((int)pa[i] - (int)pb[i]) > 8) changed++;
+    NSUInteger changed = 0, total = 0;
+    for (NSUInteger i = 0; i + 3 < a.length; i += 4) {
+        int la = (pa[i] * 30 + pa[i + 1] * 59 + pa[i + 2] * 11) / 100;
+        int lb = (pb[i] * 30 + pb[i + 1] * 59 + pb[i + 2] * 11) / 100;
+        if (abs(la - lb) > 8) changed++;
+        total++;
     }
-    return (double)changed / (double)a.length;
+    return total ? (double)changed / (double)total : 0.0;
 }
 
 // ── 请求处理 ────────────────────────────────────────────────────────────────
@@ -402,9 +414,14 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([purePath isEqualToString:@"/guest/info"]) {
             UIWindow *w = LCKeyWindow();
+            // view* 是 guest 自己的坐标系（老 App 会按自己的逻辑分辨率铺满，可能不等于屏幕点），
+            // 传 x/y 点击时必须用 view* 这套值，tree 里的 frame 也是它。
+            UIView *root = w.rootViewController.view ?: w;
             result = LCJSON(@{@"ok": @YES, @"pid": @(getpid()),
                               @"bundleId": NSBundle.mainBundle.bundleIdentifier ?: @"",
-                              @"width": @(w.bounds.size.width), @"height": @(w.bounds.size.height)}, 200, nil);
+                              @"width": @(w.bounds.size.width), @"height": @(w.bounds.size.height),
+                              @"viewWidth": @(root.bounds.size.width),
+                              @"viewHeight": @(root.bounds.size.height)}, 200, nil);
         } else if ([purePath isEqualToString:@"/guest/ui/tree"]) {
             NSMutableArray *items = [NSMutableArray array];
             NSArray<NSObject *> *all = LCCollect();
