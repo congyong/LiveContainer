@@ -56,7 +56,7 @@ enum LCRemoteUIAutomation {
 
     static func tree() -> [LCRemoteUIElement] {
         var out: [LCRemoteUIElement] = []
-        for window in windows {
+        for window in windows() {
             walkView(window, depth: 0, into: &out)
             if let elements = window.accessibilityElements as? [Any] {
                 walkAccessibilityObjects(elements, depth: 1, into: &out)
@@ -68,7 +68,7 @@ enum LCRemoteUIAutomation {
     private static func describe(_ obj: Any) -> (label: String, ident: String, value: String, frame: CGRect, activatable: Bool, cls: String)? {
         guard let ns = obj as? NSObject else { return nil }
         let label = ns.accessibilityLabel ?? ""
-        let ident = ns.accessibilityIdentifier ?? ""
+        let ident = (ns as? UIAccessibilityIdentification)?.accessibilityIdentifier ?? ""
         let value = ns.accessibilityValue ?? ""
         var frame = CGRect.zero
         if let view = ns as? UIView {
@@ -128,7 +128,7 @@ enum LCRemoteUIAutomation {
 
     private static func object(for index: Int) -> NSObject? {
         var all: [NSObject] = []
-        for window in windows {
+        for window in windows() {
             collectViewObjects(window, into: &all)
             if let elements = window.accessibilityElements as? [Any] {
                 collectA11yObjects(elements, into: &all)
@@ -222,7 +222,7 @@ enum LCRemoteUIAutomation {
 
     static func tap(x: CGFloat, y: CGFloat) -> (ok: Bool, detail: String) {
         let point = CGPoint(x: x, y: y)
-        for window in windows {
+        for window in windows() {
             guard window.bounds.contains(point) else { continue }
             guard let hit = window.hitTest(point, with: nil) else { continue }
             if let r = activateHit(hit) { return r }
@@ -235,7 +235,7 @@ enum LCRemoteUIAutomation {
 
     static func tab(index: Int?) -> (ok: Bool, detail: String) {
         var controllers: [UITabBarController] = []
-        for window in windows {
+        for window in windows() {
             collectTabBars(window.rootViewController, into: &controllers)
         }
         guard let tabBar = controllers.first else {
@@ -274,7 +274,7 @@ enum LCRemoteUIAutomation {
     }
 
     private static func firstResponder() -> UIResponder? {
-        for window in windows {
+        for window in windows() {
             if let r = findFirstResponder(in: window) { return r }
         }
         return nil
