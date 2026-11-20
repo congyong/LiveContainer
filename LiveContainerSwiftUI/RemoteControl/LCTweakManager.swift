@@ -287,7 +287,7 @@ enum LCTweakManager {
     /// 只回 {"signed":true} 是骗人的（真机就踩到 PKCS12 mac verify failure）。
     static func sign(folder: String?, force: Bool) async throws -> [String: Any] {
         let base = try folderURL(folder)
-        let before = list(folder: folder).reduce(into: [String: String]()) { acc, item in
+        let before = try list(folder: folder).reduce(into: [String: String]()) { acc, item in
             acc[item.fileName] = item.signature?.cdhash ?? ""
         }
         var signError: String?
@@ -296,7 +296,7 @@ enum LCTweakManager {
         } catch {
             signError = error.localizedDescription
         }
-        let after = list(folder: folder)
+        let after = try list(folder: folder)
         var files: [[String: Any]] = []
         var changed = 0
         for item in after {
