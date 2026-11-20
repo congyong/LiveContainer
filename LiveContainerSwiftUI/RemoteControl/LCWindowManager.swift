@@ -124,8 +124,7 @@ private enum LCWindowManager16 {
         var out: [LCWindowInfo] = []
         var seen = Set<String>()
         for vc in allControllers() {
-            if let deco = vc as? DecoratedAppSceneViewController {
-                let inner = deco.appSceneVC
+            if let deco = vc as? DecoratedAppSceneViewController, let inner = deco.appSceneVC {
                 let id = inner.dataUUID ?? ""
                 guard !id.isEmpty, !seen.contains(id) else { continue }
                 seen.insert(id)
@@ -148,10 +147,9 @@ private enum LCWindowManager16 {
 
     static func find(_ id: String) -> (decorated: DecoratedAppSceneViewController?, scene: AppSceneViewController)? {
         for vc in allControllers() {
-            if let deco = vc as? DecoratedAppSceneViewController {
-                if (deco.appSceneVC.dataUUID ?? "") == id {
-                    return (deco, deco.appSceneVC)
-                }
+            if let deco = vc as? DecoratedAppSceneViewController, let inner = deco.appSceneVC,
+               (inner.dataUUID ?? "") == id {
+                return (deco, inner)
             }
             if let scene = vc as? AppSceneViewController, (scene.dataUUID ?? "") == id {
                 return (nil, scene)
@@ -182,11 +180,11 @@ private enum LCWindowManager16 {
                 content.layer.sublayerTransform = CATransform3DMakeScale(clamped, clamped, 1.0)
             }
         }
-        scene.updateFrameWithSettingsBlock { (settings: UIMutableApplicationSceneSettings?) in
+        scene.updateFrame(settingsBlock: { (settings: UIMutableApplicationSceneSettings?) in
             guard let settings else { return }
             settings.peripheryInsets = .zero
             settings.safeAreaInsetsPortrait = .zero
-        }
+        })
         LCRemoteLogStore.shared.append("window \(id) scale -> \(clamped)", src: "api")
     }
 
