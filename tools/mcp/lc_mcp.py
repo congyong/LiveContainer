@@ -361,7 +361,33 @@ def tool_guest_info(_args):
     return api_get("/api/v1/guest/info")
 
 
+def tool_open_app(args):
+    bundle_id = args.get("bundle_id", "")
+    if not bundle_id:
+        raise RuntimeError("需要 bundle_id（先用 lc_apps 取）")
+    body = {"bundleId": bundle_id}
+    if args.get("container"):
+        body["container"] = args["container"]
+    if args.get("url"):
+        body["url"] = args["url"]
+    return _request("POST", "/api/v1/apps/open",
+                    data=json.dumps(body).encode(), content_type="application/json")
+
+
 TOOLS = [
+    {
+        "name": "lc_open_app",
+        "description": "一步打开已装 App（多任务窗口）并等 guest 侧就绪，返回窗口与 guest pid。想进 App 内部操作时先用它。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "bundle_id": {"type": "string", "description": "来自 lc_apps"},
+                "container": {"type": "string", "description": "数据容器 folderName，可选"},
+                "url": {"type": "string", "description": "启动 URL，可选"},
+            },
+            "required": ["bundle_id"],
+        },
+    },
     {
         "name": "lc_health",
         "description": "探活：返回 LiveContainer 版本、端口。不需要 token。",
@@ -691,6 +717,7 @@ TOOLS = [
 ]
 
 HANDLERS = {
+    "lc_open_app": tool_open_app,
     "lc_health": tool_health,
     "lc_apps": tool_apps,
     "lc_install_ipa": tool_install,

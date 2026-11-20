@@ -67,6 +67,9 @@ enum LCRemoteAPI {
                 let bundleId = String(p.dropFirst("/api/v1/apps/".count)).removingPercentEncoding ?? ""
                 return try await uninstall(bundleId: bundleId, keepData: req.query["keepData"] == "1" || req.query["keepData"] == "true")
 
+            case ("POST", "/api/v1/apps/open"):
+                return await openApp(req)
+
             case ("POST", "/api/v1/apps/from-url"):
                 return await installFromURL(req)
 
@@ -174,6 +177,50 @@ enum LCRemoteAPI {
             try LCAppInstaller.uninstall(bundleId: bundleId, removeData: !keepData)
         }
         return .json(result)
+    }
+
+    /// 一步到位：装好的 App 直接开（多任务窗口）+ 等 guest sidecar 就绪，返回窗口与 guest pid。
+    /// 用法：{"bundleId":"com.xxx","container":"<可选>","url":"<可选>"} 或 ?bundleId=
+    @MainActor
+    private static func openApp(_ req: LCRemoteRequest) async -> LCRemoteResponse {
+        let obj = jsonBody(req)
+        guard let bundleId = ((obj["bundleId"] as? String) ?? req.query["bundleId"]), !bundleId.isEmpty else {
+            return .error("需要 bundleId", status: 400, code: "bad_request")
+        }
+        let model = (DataManager.shared.model.apps + DataManager.shared.model.hiddenApps)
+            .first { $0.appInfo.bundleIdentifier() == bundleId }
+        guard let model else {
+            return .error("未找到应用 \(bundleId)", status: 404, code: "not_found")
+        }
+        let container = (obj["container"] as? String) ?? req.query["container"]
+        let urlStr = (obj["url"] as? String) ?? req.query["url"]
+        do {
+            try await model.runApp(multitask: true, containerFolderName: container, urlStr: urlStr)
+        } catch {
+            return .error("启动失败: \(error.localizedDescription)", status: 500, code: "launch_failed")
+        }
+
+        // 等 guest sidecar 起来（最多 ~10s），顺便把窗口信息带回去
+        var guest: [String: Any]?
+        for _ in 0..<25 {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            let probe = await LCRemoteGuestProxy.forward(
+                LCRemoteRequest(method: "GET", path: "/api/v1/guest/info"), path: "/api/v1/guest/info")
+            if probe.status == 200, let o = try? JSONSerialization.jsonObject(with: probe.body) as? [String: Any] {
+                guest = o
+                break
+            }
+        }
+        let windows = LCWindowManager.windows()
+            .filter { $0.bundleId.hasPrefix(bundleId) }
+            .map { $0.json }
+        return .json([
+            "opened": true,
+            "bundleId": bundleId,
+            "windows": windows,
+            "guest": guest ?? NSNull(),
+            "guestReady": guest != nil
+        ])
     }
 
     // MARK: - 异步任务（设备自己下载 IPA）
