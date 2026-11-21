@@ -17,6 +17,9 @@ concurrency:
 jobs:
   build:
     name: Build IPA (unsigned)
+    # 这个 workflow 只服务 fork 自己的侧载包（会往 rc-latest 发 release）。
+    # 上游仓库里即使合并了这个文件也不会跑。
+    if: github.repository == 'congyong/LiveContainer'
     runs-on: xcode-27
     steps:
       # 上游用的就是这套：macos-15 的 Xcode 16.4（iOS 18.5 SDK）编不过
