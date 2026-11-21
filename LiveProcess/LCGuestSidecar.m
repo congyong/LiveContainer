@@ -415,7 +415,7 @@ static UIView *LCFindTextInputView(void) {
     return fallback;
 }
 
-static NSDictionary *LCTextInput(NSString *text) {
+static NSDictionary *LCTextInput(NSString *text, BOOL replace) {
     UIView *fr = nil;
     NSMutableArray<UIView *> *stack = [NSMutableArray array];
     for (UIScene *scene in LCApp().connectedScenes) {
@@ -433,6 +433,19 @@ static NSDictionary *LCTextInput(NSString *text) {
         if (fr) [fr becomeFirstResponder];
     }
     if (!fr) return @{@"ok": @NO, @"detail": @"no focusable text field on screen"};
+    if (replace && ([fr isKindOfClass:UITextField.class] || [fr isKindOfClass:UITextView.class])) {
+        // Remote clients usually want to set a field, not append to whatever is already there.
+        if ([fr isKindOfClass:UITextField.class]) {
+            UITextField *tf = (UITextField *)fr;
+            tf.text = text;
+            [tf sendActionsForControlEvents:UIControlEventEditingChanged];
+        } else {
+            UITextView *tv = (UITextView *)fr;
+            tv.text = text;
+            [[NSNotificationCenter defaultCenter] postNotificationName:UITextViewTextDidChangeNotification object:tv];
+        }
+        return @{@"ok": @YES, @"detail": [NSString stringWithFormat:@"setText on %@", NSStringFromClass(fr.class)]};
+    }
     if ([fr conformsToProtocol:@protocol(UIKeyInput)] || [fr isKindOfClass:UITextField.class] || [fr isKindOfClass:UITextView.class]) {
         [(id<UIKeyInput>)fr insertText:text];
         return @{@"ok": @YES, @"detail": [NSString stringWithFormat:@"insertText on %@", NSStringFromClass(fr.class)]};
@@ -910,7 +923,8 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
         } else if ([purePath isEqualToString:@"/guest/ui/text"]) {
             NSDictionary *spec = body.length ? [NSJSONSerialization JSONObjectWithData:body options:0 error:nil] : @{};
             NSString *text = [spec isKindOfClass:NSDictionary.class] ? spec[@"text"] : nil;
-            result = LCJSON(LCTextInput(text ?: @""), 200, nil);
+            BOOL replace = spec[@"replace"] ? [spec[@"replace"] boolValue] : NO;
+            result = LCJSON(LCTextInput(text ?: @"", replace), 200, nil);
         } else if ([purePath isEqualToString:@"/guest/screenshot"]) {
             CGFloat maxWidth = query[@"maxWidth"] ? [query[@"maxWidth"] doubleValue] : 600;
             CGFloat quality = query[@"quality"] ? [query[@"quality"] doubleValue] / 100.0 : 0.7;

@@ -761,8 +761,10 @@ TOOLS = [
     },
     {
         "name": "lc_guest_text",
-        "description": "Types into the current text field inside the guest app.",
-        "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
+        "description": "Types into the current text field inside the guest app. replace=true sets the field instead of appending.",
+        "inputSchema": {"type": "object", "properties": {"text": {"type": "string"},
+                                                        "replace": {"type": "boolean", "description": "set the field to this text instead of appending (default false)"}},
+                        "required": ["text"]},
     },
     {
         "name": "lc_guest_screenshot",
