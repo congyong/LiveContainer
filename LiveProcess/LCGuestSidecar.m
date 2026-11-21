@@ -153,23 +153,26 @@ static NSArray<NSObject *> *LCCollect(void) {
 // 这里把元素子树里的文字抓出来（限深 3 层），这样"菜单→文件管理"这种
 // 没有 a11y 标签的界面也能按文字定位。对 SwiftUI 无效（那边有 a11y label），
 // 对 WKWebView/Flutter 也无效（文字不是 UIKit 控件，得 OCR）。
+// CALayer 子树里的文字（CATextLayer.string，可能是 NSString 或 NSAttributedString）
+static void LCCollectLayerTexts(CALayer *layer, NSMutableArray<NSString *> *out, NSInteger depth) {
+    if (!layer || depth > 6 || out.count >= 12) return;
+    if ([layer isKindOfClass:NSClassFromString(@"CATextLayer")]) {
+        id str = [(id)layer valueForKey:@"string"];
+        NSString *plain = nil;
+        if ([str isKindOfClass:NSString.class]) plain = str;
+        else if ([str isKindOfClass:NSAttributedString.class]) plain = [(NSAttributedString *)str string];
+        if (plain.length && ![out containsObject:plain]) [out addObject:plain];
+    }
+    for (CALayer *sub in layer.sublayers) LCCollectLayerTexts(sub, out, depth + 1);
+}
+
 static void LCCollectTexts(UIView *v, NSMutableArray<NSString *> *out, NSInteger depth) {
     // 老 App 的菜单项往往是 MenuBtn → 容器 → UIStackView → UILabel，层数比想象深，
     // 所以放到 6 层、最多 12 条文字。
     if (!v || depth > 6 || out.count >= 12) return;
     NSString *t = nil;
-    // CATextLayer：有些自定义按钮（如这个 App 的 MenuBtn）文字是画在图层的
-    for (CALayer *l in v.layer.sublayers) {
-        if ([l isKindOfClass:NSClassFromString(@"CATextLayer")]) {
-            id str = [(id)l valueForKey:@"string"];
-            if ([str isKindOfClass:NSString.class] && [str length]) {
-                if (![out containsObject:str]) [out addObject:str];
-            } else if ([str isKindOfClass:NSAttributedString.class]) {
-                NSString *plain = [(NSAttributedString *)str string];
-                if (plain.length && ![out containsObject:plain]) [out addObject:plain];
-            }
-        }
-    }
+    // CATextLayer：有些自定义按钮的文字是画在图层的（要往 layer 子树里挖，不能只看一层）
+    LCCollectLayerTexts(v.layer, out, 0);
     if ([v isKindOfClass:UILabel.class]) {
         UILabel *lb = (UILabel *)v;
         t = lb.text.length ? lb.text : lb.attributedText.string;
@@ -348,7 +351,7 @@ static NSDictionary *LCActivateSpec(NSDictionary *spec) {
             if (seen.count >= 12) break;
         }
         // 视图树里没有（自绘/WebView）→ OCR 看图找文字，按框中心点一下
-        for (NSDictionary *it in LCRecognizeText()) {
+        for (NSDictionary *it in LCOCRRun()[@"items"]) {
             NSString *t2 = it[@"text"];
             if (![t2 containsString:txt]) continue;
             CGFloat cx = [it[@"x"] doubleValue] + [it[@"w"] doubleValue] / 2.0;
@@ -456,6 +459,91 @@ static UIImage *LCSnapshot(CGFloat maxWidth) {
 // 自绘文字（画笔/图层/WebView/Flutter）在视图树里根本读不到，只能看图识字。
 // 用系统的 Vision 框架做中文+英文识别，返回归一化框换算成视图坐标。
 // 这样"按文字点"对任何 App 都成立，而不只是 UIKit 原生控件。
+// ── OCR 缓存与记录 ─────────────────────────────────────────────────────────
+// 每次 OCR 结果按"画面指纹"缓存下来（同一屏重复问就不再跑 Vision），
+// 同时追加到 app group 里的 ocr-log.jsonl，随时可以回看某个页面识别到了什么。
+static NSMutableDictionary<NSString *, NSArray<NSDictionary *> *> *gOcrCache;
+static NSMutableArray<NSDictionary *> *gOcrHistory;
+static NSString *gOcrLogPath;
+
+static void LCOCRInitStore(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        gOcrCache = [NSMutableDictionary dictionary];
+        gOcrHistory = [NSMutableArray array];
+        NSURL *dir = [LCGroupURL() URLByAppendingPathComponent:@"LiveContainer/RemoteControl"];
+        if (!dir) dir = [NSURL fileURLWithPath:NSTemporaryDirectory()];
+        [[NSFileManager defaultManager] createDirectoryAtURL:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        gOcrLogPath = [[dir URLByAppendingPathComponent:@"ocr-log.jsonl"] path];
+    });
+}
+
+// 画面指纹（8 字节 sha256）
+static NSString *LCScreenDigest(void) {
+    NSData *thumb = LCGrayThumb();
+    if (!thumb) return @"";
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {0};
+    CC_SHA256(thumb.bytes, (CC_LONG)thumb.length, digest);
+    NSMutableString *s = [NSMutableString string];
+    for (int i = 0; i < 8; i++) [s appendFormat:@"%02x", digest[i]];
+    return s;
+}
+
+// 带缓存的 OCR：返回 (items, cached, digest)
+static NSDictionary *LCOCRRun(void) {
+    LCOCRInitStore();
+    NSString *digest = LCScreenDigest();
+    if (digest.length && gOcrCache[digest]) {
+        return @{@"items": gOcrCache[digest], @"cached": @YES, @"digest": digest};
+    }
+    NSArray<NSDictionary *> *items = LCRecognizeText();
+    if (digest.length) {
+        if (gOcrCache.count > 80) [gOcrCache removeAllObjects];
+        gOcrCache[digest] = items;
+    }
+    NSDictionary *rec = @{@"ts": @([[NSDate date] timeIntervalSince1970]),
+                          @"bundleId": NSBundle.mainBundle.bundleIdentifier ?: @"",
+                          @"pid": @(getpid()),
+                          @"digest": digest ?: @"",
+                          @"count": @(items.count),
+                          @"items": items};
+    [gOcrHistory addObject:rec];
+    if (gOcrHistory.count > 200) [gOcrHistory removeObjectAtIndex:0];
+    if (gOcrLogPath.length) {
+        NSData *line = [[[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:rec options:0 error:nil]
+                                              encoding:NSUTF8StringEncoding] dataUsingEncoding:NSUTF8StringEncoding];
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:gOcrLogPath];
+        if (!fh) {
+            [[NSFileManager defaultManager] createFileAtPath:gOcrLogPath contents:nil attributes:nil];
+            fh = [NSFileHandle fileHandleForWritingAtPath:gOcrLogPath];
+        }
+        [fh seekToEndOfFile];
+        [fh writeData:line];
+        [fh writeData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
+        [fh closeFile];
+    }
+    return @{@"items": items, @"cached": @NO, @"digest": digest ?: @""};
+}
+
+// ── 视图结构导出（回答"这到底是控件还是画上去的"）──────────────────────────
+static NSDictionary *LCInspectNode(UIView *v, NSInteger depth) {
+    if (!v || depth > 8) return @{};
+    NSMutableArray<NSString *> *texts = [NSMutableArray array];
+    LCCollectTexts(v, texts, 0);
+    NSMutableArray *kids = [NSMutableArray array];
+    for (UIView *sub in v.subviews) [kids addObject:LCInspectNode(sub, depth + 1)];
+    return @{@"class": NSStringFromClass(v.class),
+             @"frame": @{@"x": @(v.frame.origin.x), @"y": @(v.frame.origin.y),
+                         @"w": @(v.frame.size.width), @"h": @(v.frame.size.height)},
+             @"hidden": @(v.hidden),
+             @"alpha": @(v.alpha),
+             @"userInteraction": @(v.userInteractionEnabled),
+             @"isControl": @([v isKindOfClass:UIControl.class]),
+             @"drawsItself": @(v.contentMode != UIViewContentModeRedraw && v.subviews.count == 0),
+             @"texts": texts,
+             @"subviews": kids};
+}
+
 static NSArray<NSDictionary *> *LCRecognizeText(void) {
     UIImage *img = LCSnapshot(0);
     CGImageRef cg = img.CGImage;
@@ -570,16 +658,44 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
                               @"viewWidth": @(root.bounds.size.width),
                               @"viewHeight": @(root.bounds.size.height)}, 200, nil);
         } else if ([purePath isEqualToString:@"/guest/ocr"]) {
-            NSArray<NSDictionary *> *items = LCRecognizeText();
+            NSDictionary *run = LCOCRRun();
+            NSArray<NSDictionary *> *items = run[@"items"];
             NSString *want = query[@"text"];
             if (want.length) {
                 NSMutableArray *hit = [NSMutableArray array];
                 for (NSDictionary *it in items) {
                     if ([it[@"text"] containsString:want]) [hit addObject:it];
                 }
-                result = LCJSON(@{@"ok": @YES, @"count": @(hit.count), @"items": hit}, 200, nil);
+                result = LCJSON(@{@"ok": @YES, @"count": @(hit.count), @"items": hit,
+                                  @"cached": run[@"cached"], @"digest": run[@"digest"]}, 200, nil);
             } else {
-                result = LCJSON(@{@"ok": @YES, @"count": @(items.count), @"items": items}, 200, nil);
+                result = LCJSON(@{@"ok": @YES, @"count": @(items.count), @"items": items,
+                                  @"cached": run[@"cached"], @"digest": run[@"digest"]}, 200, nil);
+            }
+        } else if ([purePath isEqualToString:@"/guest/ocr/history"]) {
+            LCOCRInitStore();
+            NSInteger limit = query[@"limit"] ? [query[@"limit"] integerValue] : 20;
+            NSArray *h = gOcrHistory;
+            if (limit > 0 && (NSInteger)h.count > limit) {
+                h = [h subarrayWithRange:NSMakeRange(h.count - limit, limit)];
+            }
+            result = LCJSON(@{@"ok": @YES, @"count": @(h.count), @"logPath": gOcrLogPath ?: @"",
+                              @"records": h ?: @[]}, 200, nil);
+        } else if ([purePath isEqualToString:@"/guest/inspect"]) {
+            // 挖某个元素的视图结构，用来判断"文字到底是控件还是画上去的"
+            NSInteger idx = query[@"index"] ? [query[@"index"] integerValue] : -1;
+            NSArray<NSObject *> *all = LCCollect();
+            if (idx < 0 || idx >= (NSInteger)all.count) {
+                result = LCJSON(@{@"ok": @NO, @"error": @"index 越界", @"count": @(all.count)}, 400, nil);
+            } else {
+                NSObject *o = all[(NSUInteger)idx];
+                if ([o isKindOfClass:UIView.class]) {
+                    result = LCJSON(@{@"ok": @YES, @"index": @(idx),
+                                      @"tree": LCInspectNode((UIView *)o, 0)}, 200, nil);
+                } else {
+                    result = LCJSON(@{@"ok": @YES, @"index": @(idx), @"notAView": @YES,
+                                      @"class": NSStringFromClass(o.class)}, 200, nil);
+                }
             }
         } else if ([purePath isEqualToString:@"/guest/ui/tree"]) {
             NSMutableArray *items = [NSMutableArray array];
