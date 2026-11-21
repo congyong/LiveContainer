@@ -151,7 +151,8 @@ struct LCSettingsView: View {
                     NavigationLink {
                         LCRemoteSettingsView()
                     } label: {
-                        Label("远程控制 (HTTP API)", systemImage: "antenna.radiowaves.left.and.right")
+                        // 和这一页其它设置行保持一致：纯文字，不带图标/emoji
+                        Text("远程控制 (HTTP API)")
                     }
                 } footer: {
                     Text("在设备上开一个 HTTP 服务，用 curl / MCP 远程装卸 IPA、查日志。默认关闭。")
