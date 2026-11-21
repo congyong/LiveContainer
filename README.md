@@ -62,7 +62,7 @@ MCP 客户端（Claude / Hermes / …） ──stdio──▶ tools/mcp/lc_mcp.p
 }
 ```
 
-## MCP 工具（39 个）
+## MCP 工具（40 个）
 
 | 分组 | 工具 |
 | --- | --- |

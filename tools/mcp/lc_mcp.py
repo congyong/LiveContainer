@@ -431,6 +431,15 @@ def tool_guest_inspect(args):
     return api_get("/api/v1/guest/inspect?index=%d" % int(idx))
 
 
+def tool_log_push(args):
+    msg = args.get("msg", "")
+    if not msg:
+        raise RuntimeError("需要 msg")
+    body = {"msg": msg, "src": args.get("src", "mcp")}
+    return _request("POST", "/api/v1/logs",
+                    data=json.dumps(body).encode(), content_type="application/json")
+
+
 TOOLS = [
     {
         "name": "lc_window_chrome",
@@ -799,6 +808,15 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}},
     },
     {
+        "name": "lc_log_push",
+        "description": "主动往设备日志环形缓冲写一条（容器/guest/tweak/脚本都能用），再用 lc_logs 按 seq 增量读。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"msg": {"type": "string"}, "src": {"type": "string", "description": "默认 mcp"}},
+            "required": ["msg"],
+        },
+    },
+    {
         "name": "lc_logs",
         "description": "拉设备日志（进程内 stdout/stderr 环形缓冲）。since=上次返回的 latest 可增量拉取；wait=长轮询秒数。",
         "inputSchema": {
@@ -851,6 +869,7 @@ HANDLERS = {
     "lc_ui_text": tool_ui_text,
     "lc_jobs": tool_jobs,
     "lc_keepalive": tool_keepalive,
+    "lc_log_push": tool_log_push,
     "lc_logs": tool_logs,
 }
 

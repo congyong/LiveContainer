@@ -56,6 +56,18 @@ enum LCRemoteAPI {
             case ("GET", "/api/v1/logs"):
                 return await logs(req)
 
+            case ("POST", "/api/v1/logs"):
+                // 主动上报：容器、guest 里的 tweak、外部脚本都能往环形缓冲写一条
+                // body {"msg":"...","src":"tweak"} 或 ?msg=
+                let obj = jsonBody(req)
+                let msg = (obj["msg"] as? String) ?? req.query["msg"] ?? ""
+                let src = (obj["src"] as? String) ?? req.query["src"] ?? "push"
+                guard !msg.isEmpty else {
+                    return .error("需要 msg", status: 400, code: "bad_request")
+                }
+                LCRemoteLogStore.shared.append(msg, src: src)
+                return .json(["pushed": true, "src": src, "latest": LCRemoteLogStore.shared.latestSeq()])
+
             case ("GET", "/api/v1/logs/guest"):
                 return guestLogs(req)
 
