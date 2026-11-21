@@ -62,9 +62,9 @@ enum LCRemoteUIAutomation {
     }
 
     private static func collectTexts(_ v: UIView, depth: Int, into out: inout [String]) {
-        if depth > 3 || out.count >= 8 { return }
+        if depth > 6 || out.count >= 12 { return }
         func add(_ t: String?) {
-            guard let t, !t.isEmpty, !out.contains(t), out.count < 8 else { return }
+            guard let t, !t.isEmpty, !out.contains(t), out.count < 12 else { return }
             out.append(t)
         }
         if let l = v as? UILabel {

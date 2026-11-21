@@ -150,7 +150,9 @@ static NSArray<NSObject *> *LCCollect(void) {
 // 没有 a11y 标签的界面也能按文字定位。对 SwiftUI 无效（那边有 a11y label），
 // 对 WKWebView/Flutter 也无效（文字不是 UIKit 控件，得 OCR）。
 static void LCCollectTexts(UIView *v, NSMutableArray<NSString *> *out, NSInteger depth) {
-    if (!v || depth > 3 || out.count >= 8) return;
+    // 老 App 的菜单项往往是 MenuBtn → 容器 → UIStackView → UILabel，层数比想象深，
+    // 所以放到 6 层、最多 12 条文字。
+    if (!v || depth > 6 || out.count >= 12) return;
     NSString *t = nil;
     if ([v isKindOfClass:UILabel.class]) {
         t = ((UILabel *)v).text;
