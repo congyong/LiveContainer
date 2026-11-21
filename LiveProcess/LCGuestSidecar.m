@@ -447,9 +447,11 @@ static UIImage *LCSnapshot(CGFloat maxWidth) {
         BOOL drew = [w drawViewHierarchyInRect:w.bounds afterScreenUpdates:NO];
         if (!drew) [w.layer renderInContext:ctx.CGContext];
     }];
-    if (maxWidth > 0 && img.size.width > maxWidth) {
-        CGFloat scale = maxWidth / img.size.width;
-        CGSize size = CGSizeMake(maxWidth, img.size.height * scale);
+    // maxWidth 按"像素"理解：img.size 是点，实际位图是 size * scale
+    CGFloat pixelWidth = img.size.width * img.scale;
+    if (maxWidth > 0 && pixelWidth > maxWidth) {
+        CGFloat scale = maxWidth / pixelWidth;
+        CGSize size = CGSizeMake(floor(img.size.width * scale), floor(img.size.height * scale));
         UIGraphicsImageRendererFormat *f = [UIGraphicsImageRendererFormat defaultFormat];
         f.scale = 1;
         img = [[[UIGraphicsImageRenderer alloc] initWithSize:size format:f] imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
@@ -643,7 +645,10 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
     if (q.location != NSNotFound) {
         for (NSString *pair in [[path substringFromIndex:q.location + 1] componentsSeparatedByString:@"&"]) {
             NSArray *kv = [pair componentsSeparatedByString:@"="];
-            if (kv.count == 2) query[kv[0]] = kv[1];
+            if (kv.count == 2) {
+                NSString *decoded = [kv[1] stringByRemovingPercentEncoding] ?: kv[1];
+                query[kv[0]] = decoded;
+            }
         }
     }
 
