@@ -81,6 +81,21 @@ enum LCWindowManager {
         try LCWindowManager16.close(id)
     }
 
+    /// 标题栏三个按钮绑定的 selector（关闭 / 最大化 / 最小化）
+    static func chromeButtons(_ id: String) -> [[String: Any]] {
+        if #available(iOS 16.0, *) {
+            return LCWindowManager16.chromeButtons(id)
+        }
+        return []
+    }
+
+    /// 按按钮绑定的 selector 触发事件（等价于点那个按钮）
+    @discardableResult
+    static func pressChrome(_ id: String, selector: String) throws -> [String: Any] {
+        guard #available(iOS 16.0, *) else { throw LCWindowManagerError.unsupported("需要 iOS 16+") }
+        return try LCWindowManager16.pressChrome(id, selector: selector)
+    }
+
     /// 截图用：优先装饰窗口整块，其次 App 内容视图；id 为空则取 key window
     static func captureView(_ id: String?) -> UIView? {
         if let id {
