@@ -441,20 +441,47 @@ static NSDictionary *LCTextInput(NSString *text) {
 }
 
 static UIImage *LCSnapshot(CGFloat maxWidth) {
-    UIWindow *w = LCKeyWindow();
-    if (!w || w.bounds.size.width < 1) return nil;
-    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithBounds:w.bounds];
-    UIImage *img = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
-        BOOL drew = [w drawViewHierarchyInRect:w.bounds afterScreenUpdates:NO];
-        if (!drew) [w.layer renderInContext:ctx.CGContext];
+    UIWindow *key = LCKeyWindow();
+    if (!key || key.bounds.size.width < 1) return nil;
+
+    // Composite every visible window of the scene instead of only the key window: an empty
+    // placeholder window can be "key" while the app content lives in another one, which showed
+    // up on device as an all-black screenshot next to a view tree with 33 elements.
+    NSMutableArray<UIWindow *> *wins = [NSMutableArray array];
+    for (UIScene *scene in LCApp().connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+            if (w.hidden || w.alpha < 0.01) continue;
+            [wins addObject:w];
+        }
+    }
+    if (wins.count == 0) [wins addObject:key];
+    [wins sortUsingComparator:^NSComparisonResult(UIWindow *a, UIWindow *b) {
+        if (a.windowLevel < b.windowLevel) return NSOrderedAscending;
+        if (a.windowLevel > b.windowLevel) return NSOrderedDescending;
+        return NSOrderedSame;
     }];
-    // maxWidth is in pixels: img.size is points, the bitmap is size * scale.
+
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithBounds:key.bounds];
+    UIImage *img = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        for (UIWindow *w in wins) {
+            CGContextSaveGState(ctx.CGContext);
+            CGContextTranslateCTM(ctx.CGContext, w.frame.origin.x, w.frame.origin.y);
+            BOOL drew = [w drawViewHierarchyInRect:w.bounds afterScreenUpdates:NO];
+            if (!drew) [w.layer renderInContext:ctx.CGContext];
+            CGContextRestoreGState(ctx.CGContext);
+        }
+    }];
+    if (!img) return nil;
+
+    // maxWidth is in OUTPUT PIXELS: size is points, the bitmap is size * scale, so the target
+    // rect has to be maxWidth / scale points tall and the renderer keeps the device scale.
     CGFloat pixelWidth = img.size.width * img.scale;
     if (maxWidth > 0 && pixelWidth > maxWidth) {
-        CGFloat scale = maxWidth / pixelWidth;
-        CGSize size = CGSizeMake(floor(img.size.width * scale), floor(img.size.height * scale));
+        CGFloat ratio = maxWidth / pixelWidth;
+        CGSize size = CGSizeMake(floor(img.size.width * ratio), floor(img.size.height * ratio));
         UIGraphicsImageRendererFormat *f = [UIGraphicsImageRendererFormat defaultFormat];
-        f.scale = 1;
+        f.scale = img.scale;
         img = [[[UIGraphicsImageRenderer alloc] initWithSize:size format:f] imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
             [img drawInRect:CGRectMake(0, 0, size.width, size.height)];
         }];
