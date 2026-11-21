@@ -37,7 +37,19 @@ enum LCRemoteGuestProxy {
     /// path 形如 /api/v1/guest/ui/tree → 转发到 http://127.0.0.1:8850/guest/ui/tree
     static func forward(_ req: LCRemoteRequest, path: String) async -> LCRemoteResponse {
         writeTokenIfNeeded()
-        let suffix = String(path.dropFirst("/api/v1".count))
+        var suffix = String(path.dropFirst("/api/v1".count))
+        // req.path 里不含 query（框架已经把 query 拆到 req.query 了），
+        // 这里得拼回去，否则 /guest/inspect?index=1、/guest/ocr?text=x、
+        // /guest/screenshot?maxWidth= 这些参数在 sidecar 那边全是空。
+        if !req.query.isEmpty {
+            let qs = req.query
+                .map { key, value in
+                    let v = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
+                    return "\(key)=\(v)"
+                }
+                .joined(separator: "&")
+            suffix += (suffix.contains("?") ? "&" : "?") + qs
+        }
         guard let url = URL(string: "http://127.0.0.1:\(port)\(suffix)") else {
             return .error("bad guest path", status: 400, code: "bad_request")
         }
