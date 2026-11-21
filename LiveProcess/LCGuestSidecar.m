@@ -144,6 +144,53 @@ static NSArray<NSObject *> *LCCollect(void) {
     return out;
 }
 
+// 通用做法：老 App 很少写 accessibilityLabel，但界面上的文字一定在某个
+// UILabel / UIButton title / UISegmentedControl 分段 / UITextField 里。
+// 这里把元素子树里的文字抓出来（限深 3 层），这样"菜单→文件管理"这种
+// 没有 a11y 标签的界面也能按文字定位。对 SwiftUI 无效（那边有 a11y label），
+// 对 WKWebView/Flutter 也无效（文字不是 UIKit 控件，得 OCR）。
+static void LCCollectTexts(UIView *v, NSMutableArray<NSString *> *out, NSInteger depth) {
+    if (!v || depth > 3 || out.count >= 8) return;
+    NSString *t = nil;
+    if ([v isKindOfClass:UILabel.class]) {
+        t = ((UILabel *)v).text;
+    } else if ([v isKindOfClass:UIButton.class]) {
+        UIButton *b = (UIButton *)v;
+        for (NSNumber *st in @[@(UIControlStateNormal), @(UIControlStateSelected), @(UIControlStateHighlighted)]) {
+            NSString *title = [b titleForState:(UIControlState)st.unsignedIntegerValue];
+            if (title.length && ![out containsObject:title]) [out addObject:title];
+        }
+    } else if ([v isKindOfClass:UISegmentedControl.class]) {
+        UISegmentedControl *seg = (UISegmentedControl *)v;
+        for (NSUInteger i = 0; i < seg.numberOfSegments; i++) {
+            NSString *title = [seg titleForSegmentAtIndex:i];
+            if (title.length && ![out containsObject:title]) [out addObject:title];
+        }
+    } else if ([v isKindOfClass:UITextField.class]) {
+        UITextField *f = (UITextField *)v;
+        for (NSString *cand in @[f.text ?: @"", f.placeholder ?: @""]) {
+            if (cand.length && ![out containsObject:cand]) [out addObject:cand];
+        }
+    } else if ([v isKindOfClass:UITextView.class]) {
+        t = ((UITextView *)v).text;
+    } else if ([v isKindOfClass:UISearchBar.class]) {
+        t = ((UISearchBar *)v).placeholder;
+    }
+    if (t.length && ![out containsObject:t]) [out addObject:t];
+    for (UIView *sub in v.subviews) LCCollectTexts(sub, out, depth + 1);
+}
+
+// 元素自身+子树的文字，拼成一个可读字符串
+static NSArray<NSString *> *LCTextsOf(NSObject *o) {
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    if ([o isKindOfClass:UIView.class]) LCCollectTexts((UIView *)o, out, 0);
+    if (out.count == 0) {
+        NSString *l = o.accessibilityLabel;
+        if (l.length) [out addObject:l];
+    }
+    return out;
+}
+
 static NSDictionary *LCDescribe(NSObject *o) {
     CGRect frame = CGRectZero;
     if ([o isKindOfClass:UIView.class]) {
@@ -154,8 +201,11 @@ static NSDictionary *LCDescribe(NSObject *o) {
     }
     BOOL activatable = [o isKindOfClass:UIControl.class]
         || (o.accessibilityTraits & (UIAccessibilityTraitButton | UIAccessibilityTraitLink | UIAccessibilityTraitTabBar)) != 0;
+    NSArray<NSString *> *texts = LCTextsOf(o);
     return @{
         @"label": o.accessibilityLabel ?: @"",
+        @"text": [texts componentsJoinedByString: @" | "],
+        @"texts": texts,
         @"identifier": ([o respondsToSelector:@selector(accessibilityIdentifier)] ? [o accessibilityIdentifier] : nil) ?: @"",
         @"value": ([o.accessibilityValue isKindOfClass:NSString.class] ? (NSString *)o.accessibilityValue : @""),
         @"class": NSStringFromClass(o.class),
@@ -251,8 +301,33 @@ static NSDictionary *LCActivateSpec(NSDictionary *spec) {
     }
     NSString *label = [spec[@"label"] isKindOfClass:NSString.class] ? spec[@"label"] : nil;
     NSString *ident = [spec[@"identifier"] isKindOfClass:NSString.class] ? spec[@"identifier"] : nil;
-    if (!label.length && !ident.length) {
-        return @{@"ok": @NO, @"detail": @"需要 index / label / identifier / x+y"};
+    NSString *txt   = [spec[@"text"] isKindOfClass:NSString.class] ? spec[@"text"] : nil;
+    if (!label.length && !ident.length && !txt.length) {
+        return @{@"ok": @NO, @"detail": @"需要 index / text / label / identifier / x+y"};
+    }
+    // 按界面上的文字找（老 App 没有 a11y label，但 UILabel/UIButton title 里有字）
+    if (txt.length && !label.length && !ident.length) {
+        // 先精确，再包含
+        for (int pass = 0; pass < 2; pass++) {
+            for (NSObject *o in all) {
+                NSArray<NSString *> *ts = LCTextsOf(o);
+                BOOL hit = NO;
+                for (NSString *t in ts) {
+                    if (pass == 0 ? [t isEqualToString:txt] : [t containsString:txt]) { hit = YES; break; }
+                }
+                if (!hit) continue;
+                NSDictionary *r = LCActivateObject(o);
+                if ([r[@"ok"] boolValue]) return r;
+            }
+        }
+        NSMutableArray<NSString *> *seen = [NSMutableArray array];
+        for (NSObject *o in all) {
+            NSArray<NSString *> *ts = LCTextsOf(o);
+            if (ts.count) [seen addObject:[ts componentsJoinedByString:@"/"]];
+            if (seen.count >= 12) break;
+        }
+        return @{@"ok": @NO, @"detail": [NSString stringWithFormat:@"没找到文字「%@」；界面上能看到的文字: %@",
+                                        txt, [seen componentsJoinedByString:@", "]]};
     }
     for (NSObject *o in all) {
         BOOL match = NO;

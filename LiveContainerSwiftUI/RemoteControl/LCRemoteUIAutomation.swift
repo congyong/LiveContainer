@@ -25,6 +25,7 @@ struct LCRemoteUIElement {
     let isControl: Bool
     let canActivate: Bool
     let depth: Int
+    let text: String
 
     var json: [String: Any] {
         ["index": index,
@@ -36,7 +37,8 @@ struct LCRemoteUIElement {
                    "w": Double(frame.width), "h": Double(frame.height)],
          "control": isControl,
          "activatable": canActivate,
-         "depth": depth]
+         "depth": depth,
+         "text": text]
     }
 }
 
@@ -45,6 +47,41 @@ enum LCRemoteUIAutomation {
 
     private static let maxNodes = 600
     private static let maxDepth = 24
+
+    /// 通用文字提取：不依赖 accessibilityLabel，直接把子树里 UILabel / UIButton title /
+    /// UISegmentedControl 分段 / UITextField 的可见文字抓出来（深度 3，最多 8 条）。
+    /// 对任何 UIKit App 都通用；SwiftUI 那边本来就有 a11y label，两者互补。
+    static func texts(of ns: NSObject) -> [String] {
+        guard let view = ns as? UIView else {
+            return (ns.accessibilityLabel?.isEmpty == false) ? [ns.accessibilityLabel!] : []
+        }
+        var out: [String] = []
+        collectTexts(view, depth: 0, into: &out)
+        if out.isEmpty, let l = ns.accessibilityLabel, !l.isEmpty { out.append(l) }
+        return out
+    }
+
+    private static func collectTexts(_ v: UIView, depth: Int, into out: inout [String]) {
+        if depth > 3 || out.count >= 8 { return }
+        func add(_ t: String?) {
+            guard let t, !t.isEmpty, !out.contains(t), out.count < 8 else { return }
+            out.append(t)
+        }
+        if let l = v as? UILabel {
+            add(l.text)
+        } else if let b = v as? UIButton {
+            add(b.title(for: .normal)); add(b.title(for: .selected))
+        } else if let seg = v as? UISegmentedControl {
+            for i in 0..<seg.numberOfSegments { add(seg.titleForSegment(at: i)) }
+        } else if let f = v as? UITextField {
+            add(f.text); add(f.placeholder)
+        } else if let tv = v as? UITextView {
+            add(tv.text)
+        } else if let sb = v as? UISearchBar {
+            add(sb.placeholder)
+        }
+        for sub in v.subviews { collectTexts(sub, depth: depth + 1, into: &out) }
+    }
 
     // MARK: - 树
 
@@ -106,10 +143,11 @@ enum LCRemoteUIAutomation {
                 || ns.accessibilityTraits.contains(.button)
                 || ns.accessibilityTraits.contains(.link)
                 || ns.accessibilityTraits.contains(.tabBar)
+            let text = texts(of: ns).joined(separator: " | ")
             out.append(LCRemoteUIElement(index: index, label: label, identifier: ident,
                                          value: value, className: String(describing: type(of: ns)),
                                          frame: frame, isControl: ns is UIControl,
-                                         canActivate: activatable, depth: 0))
+                                         canActivate: activatable, depth: 0, text: text))
         }
         return out
     }
@@ -121,6 +159,26 @@ enum LCRemoteUIAutomation {
         guard index >= 0, index < all.count else { return nil }
         return all[index]
     }
+    /// 按界面文字激活（exact 优先，其次 contains）
+    static func activate(text wanted: String) -> (ok: Bool, detail: String) {
+        guard !wanted.isEmpty else { return (false, "text 为空") }
+        let candidates = collect()
+        for pass in 0..<2 {
+            for ns in candidates {
+                let ts = texts(of: ns)
+                let hit = ts.contains { pass == 0 ? $0 == wanted : $0.contains(wanted) }
+                guard hit else { continue }
+                let r = activate(ns)
+                if r.ok { return (true, r.detail + " (by text \"\(wanted)\"") }
+            }
+        }
+        let sample = candidates.compactMap { ns -> String? in
+            let ts = texts(of: ns)
+            return ts.isEmpty ? nil : ts.joined(separator: "/")
+        }.prefix(12)
+        return (false, "没找到文字「\(wanted)」；界面上可见的文字: \(sample.joined(separator: ", "))")
+    }
+
     /// 按 index 激活；index 来自 /ui/tree
     static func activate(index: Int) -> (ok: Bool, detail: String) {
         guard let obj = object(for: index) else {

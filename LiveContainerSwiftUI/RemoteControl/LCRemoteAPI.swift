@@ -571,8 +571,14 @@ enum LCRemoteAPI {
         }
         let label = (obj["label"] as? String) ?? req.query["label"] ?? ""
         let ident = (obj["identifier"] as? String) ?? req.query["identifier"] ?? ""
+        // 按界面文字激活（不依赖 a11y label）
+        let text = (obj["text"] as? String) ?? req.query["text"] ?? ""
+        if label.isEmpty && ident.isEmpty && !text.isEmpty {
+            let r = LCRemoteUIAutomation.activate(text: text)
+            return .json(["ok": r.ok, "detail": r.detail, "text": text])
+        }
         guard !label.isEmpty || !ident.isEmpty else {
-            return .error("需要 index / label / identifier 之一", status: 400, code: "bad_request")
+            return .error("需要 index / text / label / identifier 之一", status: 400, code: "bad_request")
         }
         let r = LCRemoteUIAutomation.activate(label: label, identifier: ident)
         return .json(["ok": r.ok, "detail": r.detail, "label": label, "identifier": ident])
