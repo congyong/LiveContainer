@@ -408,7 +408,7 @@ enum LCRemoteAPI {
             case "maximize":
                 try LCWindowManager.setMaximized(id, maximized: boolValue("enabled", default: true))
             case "close":
-                try LCWindowManager.close(id)
+                return await terminateWindow(id)
             default:
                 return .error("未知动作 \(action)", status: 400, code: "bad_request")
             }
@@ -418,6 +418,40 @@ enum LCRemoteAPI {
         let infos = LCWindowManager.windows()
         return .json(["ok": true, "action": action, "id": id,
                       "windows": infos.map { $0.json }])
+    }
+
+    /// 关窗口 = 真的把 guest 进程杀掉。
+    /// 实测坑：AppSceneViewController.terminate() 里是 SIGTERM + 3s 后 SIGKILL，
+    /// 而且按 dataUUID 找到的可能是上次留下的僵尸控制器，terminate 对着它发信号什么也不会发生。
+    /// 所以这里 terminate 之后轮询 pid，仍然活着就直接 kill(SIGKILL) 兜底。
+    @MainActor
+    private static func terminateWindow(_ id: String) async -> LCRemoteResponse {
+        let before = LCWindowManager.windows().first { $0.id == id }
+        let pid = before?.pid ?? 0
+        do {
+            try LCWindowManager.close(id)
+        } catch {
+            return .error("关窗失败: \(error.localizedDescription)", status: 400, code: "close_failed")
+        }
+
+        var alive = pid > 0
+        var waited = 0
+        while waited < 6000 && alive {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            waited += 250
+            alive = pid > 0 && kill(pid_t(pid), 0) == 0
+        }
+        var forced = false
+        if alive && pid > 0 {
+            forced = kill(pid_t(pid), SIGKILL) == 0
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            alive = kill(pid_t(pid), 0) == 0
+        }
+        LCRemoteLogStore.shared.append("window \(id) close: pid=\(pid) alive=\(alive) forced=\(forced)", src: "api")
+        let live = LCWindowManager.windows().filter { $0.isRunning }
+        return .json(["ok": !alive, "action": "close", "id": id, "pid": pid,
+                      "killed": !alive, "forcedKill": forced, "waitedMs": waited,
+                      "windows": live.map { $0.json }])
     }
 
     @MainActor
