@@ -142,6 +142,7 @@ enum LCAppInstaller {
     }
 
     /// 列表用：单个 app 的摘要
+    @MainActor
     static func summary(of model: LCAppModel) -> [String: Any] {
         let info = model.appInfo
         var d: [String: Any] = [
@@ -152,7 +153,8 @@ enum LCAppInstaller {
             "path": info.bundlePath() ?? "",
             "isHidden": info.isHidden,
             "isShared": info.isShared,
-            "containers": info.containers.map { ["folderName": $0.folderName, "name": $0.name] }
+            "containers": info.containers.map { ["folderName": $0.folderName, "name": $0.name] },
+            "isAppRunning": model.isAppRunning
         ]
         if let last = info.lastLaunched {
             d["lastLaunched"] = ISO8601DateFormatter().string(from: last as Date)

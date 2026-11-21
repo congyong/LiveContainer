@@ -102,7 +102,7 @@ enum LCRemoteAPI {
                 return try await tweakCreateFolder(req)
 
             case ("GET", "/api/v1/windows"):
-                return await windowList()
+                return await windowList(req)
 
             case ("POST", let p) where p.hasPrefix("/api/v1/windows/"):
                 return try await windowAction(req, path: p)
@@ -360,9 +360,13 @@ enum LCRemoteAPI {
     // MARK: - 多任务窗口 / 截图
 
     @MainActor
-    private static func windowList() async -> LCRemoteResponse {
-        let infos = LCWindowManager.windows()
-        return .json(["count": infos.count, "windows": infos.map { $0.json }])
+    private static func windowList(_ req: LCRemoteRequest) async -> LCRemoteResponse {
+        let all = LCWindowManager.windows()
+        // 关掉的窗口还会留在控制器列表里（running=false），默认不返回，?all=1 才带上
+        let includeClosed = req.query["all"] == "1" || req.query["all"]?.lowercased() == "true"
+        let infos = includeClosed ? all : all.filter { $0.isRunning }
+        return .json(["count": infos.count, "windows": infos.map { $0.json },
+                      "closed": all.count - infos.count])
     }
 
     /// POST /api/v1/windows/{id}/{scale|pip|maximize|close}
