@@ -24,6 +24,7 @@
 #import <unistd.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <objc/message.h>
+#import <Vision/Vision.h>
 
 static const int kLCGuestSidecarPort = 8850;
 
@@ -343,7 +344,20 @@ static NSDictionary *LCActivateSpec(NSDictionary *spec) {
             if (ts.count) [seen addObject:[ts componentsJoinedByString:@"/"]];
             if (seen.count >= 12) break;
         }
-        return @{@"ok": @NO, @"detail": [NSString stringWithFormat:@"没找到文字「%@」；界面上能看到的文字: %@",
+        // 视图树里没有（自绘/WebView）→ OCR 看图找文字，按框中心点一下
+        for (NSDictionary *it in LCRecognizeText()) {
+            NSString *t2 = it[@"text"];
+            if (![t2 containsString:txt]) continue;
+            CGFloat cx = [it[@"x"] doubleValue] + [it[@"w"] doubleValue] / 2.0;
+            CGFloat cy = [it[@"y"] doubleValue] + [it[@"h"] doubleValue] / 2.0;
+            NSDictionary *r = LCTap(cx, cy);
+            NSMutableDictionary *m = [r mutableCopy];
+            m[@"detail"] = [NSString stringWithFormat:@"OCR 命中「%@」→ (%.0f,%.0f): %@",
+                            t2, cx, cy, r[@"detail"] ?: @""];
+            m[@"via"] = @"ocr";
+            return m;
+        }
+        return @{@"ok": @NO, @"detail": [NSString stringWithFormat:@"没找到文字「%@」（视图树和 OCR 都没有）；视图树里能看到的文字: %@",
                                         txt, [seen componentsJoinedByString:@", "]]};
     }
     for (NSObject *o in all) {
@@ -435,6 +449,44 @@ static UIImage *LCSnapshot(CGFloat maxWidth) {
     return img;
 }
 
+// ── OCR ─────────────────────────────────────────────────────────────────────
+// 自绘文字（画笔/图层/WebView/Flutter）在视图树里根本读不到，只能看图识字。
+// 用系统的 Vision 框架做中文+英文识别，返回归一化框换算成视图坐标。
+// 这样"按文字点"对任何 App 都成立，而不只是 UIKit 原生控件。
+static NSArray<NSDictionary *> *LCRecognizeText(void) {
+    UIImage *img = LCSnapshot(0);
+    CGImageRef cg = img.CGImage;
+    if (!cg) return @[];
+    CGSize pts = img.size;                 // 点尺寸 == 窗口 bounds
+    __block NSArray<NSDictionary *> *items = @[];
+    VNImageRequestHandler *handler =
+        [[VNImageRequestHandler alloc] initWithCGImage:cg orientation:kCGImagePropertyOrientationUp options:@{}];
+    VNRecognizeTextRequest *req = [[VNRecognizeTextRequest alloc] init];
+    req.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
+    req.recognitionLanguages = @[@"zh-Hans", @"en-US"];
+    req.usesLanguageCorrection = YES;
+    NSError *err = nil;
+    if (![handler performRequests:@[req] error:&err]) {
+        fprintf(stderr, "[LCGuestSidecar] ocr failed: %s\n", err.localizedDescription.UTF8String);
+        return @[];
+    }
+    NSMutableArray<NSDictionary *> *out = [NSMutableArray array];
+    for (VNRecognizedTextObservation *obs in req.results) {
+        VNRecognizedText *best = [obs topCandidates:1].firstObject;
+        if (!best.string.length) continue;
+        CGRect bb = obs.boundingBox;       // 归一化，原点在左下
+        CGFloat x = bb.origin.x * pts.width;
+        CGFloat w = bb.size.width * pts.width;
+        CGFloat h = bb.size.height * pts.height;
+        CGFloat y = (1.0 - bb.origin.y - bb.size.height) * pts.height;
+        [out addObject:@{@"text": best.string,
+                         @"confidence": @(best.confidence),
+                         @"x": @(x), @"y": @(y), @"w": @(w), @"h": @(h)}];
+    }
+    items = out;
+    return items;
+}
+
 // 把画面缩到 48x96 的缩略图（走 UIGraphicsImageRenderer + RGBA 位图，
 // 之前用 CGBitmapContextCreate(灰度) 在真机上拿到的全是 0，导致 diff 永远是 0）
 static NSData *LCGrayThumb(void) {
@@ -514,6 +566,21 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
                               @"width": @(w.bounds.size.width), @"height": @(w.bounds.size.height),
                               @"viewWidth": @(root.bounds.size.width),
                               @"viewHeight": @(root.bounds.size.height)}, 200, nil);
+        } else if ([purePath isEqualToString:@"/guest/ocr"]) {
+            NSArray<NSDictionary *> *items = LCRecognizeText();
+            NSString *want = nil;
+            for (NSString *kv in [purePath isEqualToString:@""] ? @[] : [path componentsSeparatedByString:@"?"]) {
+                if ([kv hasPrefix:@"text="]) want = [kv substringFromIndex:5].stringByRemovingPercentEncoding;
+            }
+            if (want.length) {
+                NSMutableArray *hit = [NSMutableArray array];
+                for (NSDictionary *it in items) {
+                    if ([it[@"text"] containsString:want]) [hit addObject:it];
+                }
+                result = LCJSON(@{@"ok": @YES, @"count": @(hit.count), @"items": hit}, 200, nil);
+            } else {
+                result = LCJSON(@{@"ok": @YES, @"count": @(items.count), @"items": items}, 200, nil);
+            }
         } else if ([purePath isEqualToString:@"/guest/ui/tree"]) {
             NSMutableArray *items = [NSMutableArray array];
             NSArray<NSObject *> *all = LCCollect();
