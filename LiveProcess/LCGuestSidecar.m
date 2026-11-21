@@ -154,12 +154,27 @@ static void LCCollectTexts(UIView *v, NSMutableArray<NSString *> *out, NSInteger
     // 所以放到 6 层、最多 12 条文字。
     if (!v || depth > 6 || out.count >= 12) return;
     NSString *t = nil;
+    // CATextLayer：有些自定义按钮（如这个 App 的 MenuBtn）文字是画在图层的
+    for (CALayer *l in v.layer.sublayers) {
+        if ([l isKindOfClass:NSClassFromString(@"CATextLayer")]) {
+            id str = [(id)l valueForKey:@"string"];
+            if ([str isKindOfClass:NSString.class] && [str length]) {
+                if (![out containsObject:str]) [out addObject:str];
+            } else if ([str isKindOfClass:NSAttributedString.class]) {
+                NSString *plain = [(NSAttributedString *)str string];
+                if (plain.length && ![out containsObject:plain]) [out addObject:plain];
+            }
+        }
+    }
     if ([v isKindOfClass:UILabel.class]) {
-        t = ((UILabel *)v).text;
+        UILabel *lb = (UILabel *)v;
+        t = lb.text.length ? lb.text : lb.attributedText.string;
     } else if ([v isKindOfClass:UIButton.class]) {
         UIButton *b = (UIButton *)v;
         for (NSNumber *st in @[@(UIControlStateNormal), @(UIControlStateSelected), @(UIControlStateHighlighted)]) {
-            NSString *title = [b titleForState:(UIControlState)st.unsignedIntegerValue];
+            UIControlState state = (UIControlState)st.unsignedIntegerValue;
+            NSString *title = [b titleForState:state];
+            if (!title.length) title = [b attributedTitleForState:state].string;
             if (title.length && ![out containsObject:title]) [out addObject:title];
         }
     } else if ([v isKindOfClass:UISegmentedControl.class]) {
