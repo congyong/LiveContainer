@@ -126,7 +126,17 @@ private enum LCWindowManager16 {
         for vc in allControllers() {
             if let deco = vc as? DecoratedAppSceneViewController, let inner = deco.appSceneVC {
                 let id = inner.dataUUID ?? ""
-                guard !id.isEmpty, !seen.contains(id) else { continue }
+                guard !id.isEmpty else { continue }
+                if seen.contains(id) {
+                    // 已经有同 id 的条目了：只有在跑的那个才覆盖掉旧的僵尸条目
+                    if inner.isAppRunning, let i = out.firstIndex(where: { $0.id == id }) {
+                        out[i] = LCWindowInfo(id: id, bundleId: inner.bundleId ?? "", pid: inner.pid,
+                                              isRunning: true, scale: deco.scaleRatio,
+                                              isMaximized: deco.isMaximized, isDecorated: true,
+                                              frame: deco.view.frame)
+                    }
+                    continue
+                }
                 seen.insert(id)
                 out.append(LCWindowInfo(id: id, bundleId: inner.bundleId ?? "", pid: inner.pid,
                                         isRunning: inner.isAppRunning, scale: deco.scaleRatio,
@@ -145,17 +155,21 @@ private enum LCWindowManager16 {
         return out
     }
 
+    /// 按 dataUUID 找控制器。同一个 id 可能同时存在"上一轮残留（已退出）"和"当前在跑"的对象，
+    /// 所以要两趟：先找 isAppRunning 的，找不到再退回任意一个。
     static func find(_ id: String) -> (decorated: DecoratedAppSceneViewController?, scene: AppSceneViewController)? {
+        var fallback: (DecoratedAppSceneViewController?, AppSceneViewController)?
         for vc in allControllers() {
             if let deco = vc as? DecoratedAppSceneViewController, let inner = deco.appSceneVC,
                (inner.dataUUID ?? "") == id {
-                return (deco, inner)
-            }
-            if let scene = vc as? AppSceneViewController, (scene.dataUUID ?? "") == id {
-                return (nil, scene)
+                if inner.isAppRunning { return (deco, inner) }
+                if fallback == nil { fallback = (deco, inner) }
+            } else if let scene = vc as? AppSceneViewController, (scene.dataUUID ?? "") == id {
+                if scene.isAppRunning { return (nil, scene) }
+                if fallback == nil { fallback = (nil, scene) }
             }
         }
-        return nil
+        return fallback
     }
 
     static func captureView(_ id: String) -> UIView? {
@@ -164,10 +178,25 @@ private enum LCWindowManager16 {
         return found.scene.view
     }
 
+    private static func findSlider(in v: UIView) -> UISlider? {
+        if let s = v as? UISlider { return s }
+        for sub in v.subviews {
+            if let s = findSlider(in: sub) { return s }
+        }
+        return nil
+    }
+
     static func setScale(_ id: String, _ scale: CGFloat) throws {
         guard let found = find(id) else { throw LCWindowManagerError.notFound(id) }
         let scene = found.scene
         let clamped = min(max(scale, 0.4), 3.0)
+        // 优先走 UI 上那个缩放滑块的 valueChanged 事件
+        if let deco = found.decorated, let slider = findSlider(in: deco.view) {
+            slider.value = Float(clamped)
+            slider.sendActions(for: .valueChanged)
+            LCRemoteLogStore.shared.append("window \(id) scaleSliderChanged -> \(clamped)", src: "api")
+            return
+        }
         scene.scaleRatio = clamped
         if let deco = found.decorated {
             deco.scaleRatio = clamped
@@ -204,14 +233,23 @@ private enum LCWindowManager16 {
         guard let found = find(id), let deco = found.decorated else {
             throw LCWindowManagerError.unsupported("窗口 \(id) 不是装饰窗口")
         }
-        deco.isMaximized = maximized
-        deco.updateVerticalConstraints()
-        LCRemoteLogStore.shared.append("window \(id) maximized=\(maximized)", src: "api")
+        if deco.isMaximized != maximized {
+            // maximizeWindow 是 toggle（和 UI 上绿色按钮同一个事件）
+            _ = deco.perform(NSSelectorFromString("maximizeWindow"))
+        }
+        LCRemoteLogStore.shared.append("window \(id) maximizeWindow -> \(maximized)", src: "api")
     }
 
     static func close(_ id: String) throws {
         guard let found = find(id) else { throw LCWindowManagerError.notFound(id) }
+        if let deco = found.decorated {
+            // 这就是 UI 上红色 ✕ 按钮绑的事件：置 _isAppTerminationRequested，再让 scene terminate
+            // （SIGTERM → 3s 后 SIGKILL），并走正规的退出清理。
+            _ = deco.perform(NSSelectorFromString("closeWindow"))
+            LCRemoteLogStore.shared.append("window \(id) closeWindow (UI 关闭按钮事件)", src: "api")
+            return
+        }
         found.scene.terminate()
-        LCRemoteLogStore.shared.append("window \(id) terminated", src: "api")
+        LCRemoteLogStore.shared.append("window \(id) terminated (无装饰窗口)", src: "api")
     }
 }
