@@ -1,6 +1,7 @@
 //
 //  LCRemoteGuestLogs.swift
 //  LiveContainerSwiftUI
+//  Summary (EN): Captures guest app / injected tweak stdout-stderr into per-pid log files and serves them incrementally.
 //
 //  guest App / 注入进去的 tweak 的日志读取。
 //  这些日志由 LiveProcess 侧在启动时把 stdout/stderr 重定向到

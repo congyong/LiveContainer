@@ -1,6 +1,7 @@
 //
 //  LCRemoteGuestProxy.swift
 //  LiveContainerSwiftUI
+//  Summary (EN): Forwards /api/v1/guest/* to the in-guest sidecar on 127.0.0.1:8850 (shared bearer token via app group).
 //
 //  把 /api/v1/guest/* 代理到 guest 进程里的 sidecar（127.0.0.1:8850）。
 //  sidecar 在 guest 自己的进程内，因此能真正点到 App 内部的控件、截 App 自己的画面。

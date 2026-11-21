@@ -1,6 +1,7 @@
 //
 //  LCScreenshot.swift
 //  LiveContainerSwiftUI
+//  Summary (EN): Window / full-screen screenshot to JPEG for visual verification.
 //
 //  把视图渲成 JPEG 回传给调用方（AI 看图判断更省事，比让模型猜布局靠谱）。
 //  drawHierarchy 拿到的是屏幕上的真实合成结果；拿不到时退回 layer.render。

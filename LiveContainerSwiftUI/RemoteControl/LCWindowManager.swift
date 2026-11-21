@@ -1,6 +1,7 @@
 //
 //  LCWindowManager.swift
 //  LiveContainerSwiftUI
+//  Summary (EN): Multitask window control: drives the window title-bar buttons (closeWindow / maximizeWindow / PiP / scale slider).
 //
 //  多任务窗口（小窗 / PiP / 缩放 / 最大化 / 关闭）的远程控制。
 //  这些窗口是 Scene 承载的 AppSceneViewController，套在 DecoratedAppSceneViewController 里，

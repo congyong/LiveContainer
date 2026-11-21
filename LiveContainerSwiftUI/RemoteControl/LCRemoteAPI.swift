@@ -1,6 +1,7 @@
 //
 //  LCRemoteAPI.swift
 //  LiveContainerSwiftUI
+//  Summary (EN): REST route table: apps, IPAs, tweaks, windows, logs, screenshots, UI automation and the guest proxy.
 //
 //  路由与 handler。v1 只做读 + 装/卸 + 日志；tweak / launch 后续加。
 //  约定：除 /health 外全部要 `Authorization: Bearer <token>`。

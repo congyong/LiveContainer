@@ -1,6 +1,7 @@
 //
 //  LCRemoteHTTP.swift
 //  LiveContainerSwiftUI
+//  Summary (EN): Minimal HTTP/1.1 server built on Network.framework: request parsing, routing, JSON/binary responses.
 //
 //  极简 HTTP/1.1 服务端（Network.framework，无第三方依赖）：
 //   - 只做本项目 API 需要的子集：GET/POST/PATCH/DELETE，Content-Length body

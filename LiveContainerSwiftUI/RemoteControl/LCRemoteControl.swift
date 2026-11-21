@@ -1,6 +1,7 @@
 //
 //  LCRemoteControl.swift
 //  LiveContainerSwiftUI
+//  Summary (EN): Opt-in loopback HTTP server lifecycle (settings toggle, port, bearer token, keep-alive).
 //
 //  服务生命周期 + 单例门面。AppDelegate 启动时调用 startIfEnabled()。
 //

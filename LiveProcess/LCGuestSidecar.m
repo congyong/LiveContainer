@@ -1,6 +1,7 @@
 //
 //  LCGuestSidecar.m
 //  LiveProcess
+//  Summary (EN): Guest-process sidecar: loopback HTTP server inside the guest app (tree, activate, taps, text, screenshot, OCR, inspect).
 //
 //  在 guest app 自己的进程里起一个 loopback HTTP 服务，把「界面」暴露给 LiveContainer 主进程代理：
 //    GET  /guest/info                 bundleId / pid / 屏幕尺寸

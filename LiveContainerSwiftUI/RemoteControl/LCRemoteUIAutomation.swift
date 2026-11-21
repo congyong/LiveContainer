@@ -1,6 +1,7 @@
 //
 //  LCRemoteUIAutomation.swift
 //  LiveContainerSwiftUI
+//  Summary (EN): Accessibility-tree export plus element activation (UIControl sendActions / accessibilityActivate / text match).
 //
 //  把 UI 操作暴露给 API，让 agent 能自己点界面自测：
 //   - GET  /api/v1/ui/tree      可访问性树（label / identifier / frame / 能否激活）

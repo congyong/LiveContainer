@@ -1,6 +1,7 @@
 //
 //  LCAppInstaller.swift
 //  LiveContainerSwiftUI
+//  Summary (EN): IPA install / uninstall helpers used by the REST layer.
 //
 //  把 LCAppListView.installIpaFile / LCAppBannerViewController.uninstall 里
 //  与 UI 无关的部分抽出来，供远程 API 复用。行为与原实现保持一致：

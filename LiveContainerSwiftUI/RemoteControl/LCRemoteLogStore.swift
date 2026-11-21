@@ -1,6 +1,7 @@
 //
 //  LCRemoteLogStore.swift
 //  LiveContainerSwiftUI
+//  Summary (EN): In-process log ring buffer with sequence numbers so clients can poll incrementally.
 //
 //  日志捕获与环形缓冲：
 //   - 把进程的 stdout / stderr 用 dup2 接到一根 pipe 上（NSLog、Swift print、guest app
