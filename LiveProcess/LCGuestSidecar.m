@@ -29,10 +29,18 @@
 
 static const int kLCGuestSidecarPort = 8850;
 
-// Forward declaration: activate uses it before the implementation below LCSnapshot.
+// Forward declarations: the snapshot/OCR helpers reference each other, and the request handler
+// below uses them before their definitions.
+static UIImage *LCSnapshot(CGFloat maxWidth);
+static UIImage *LCResize(UIImage *img, CGFloat maxWidth);
+static void LCSnapshotWithWeb(CGFloat maxWidth, void (^done)(UIImage *));
 static NSArray<NSDictionary *> *LCRecognizeText(void);
+static NSArray<NSDictionary *> *LCRecognizeImage(UIImage *img);
 static NSDictionary *LCOCRRun(void);
+static NSDictionary *LCOCRRunWithImage(UIImage *img);
 static NSData *LCGrayThumb(void);
+static NSData *LCGrayThumbOf(UIImage *img);
+static NSString *LCImageDigest(UIImage *img);
 static void LCCollectTexts(UIView *v, NSMutableArray<NSString *> *out, NSInteger depth);
 static void LCCollectLayerTexts(CALayer *layer, NSMutableArray<NSString *> *out, NSInteger depth);
 
