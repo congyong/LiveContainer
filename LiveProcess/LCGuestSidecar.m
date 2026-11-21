@@ -568,10 +568,7 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
                               @"viewHeight": @(root.bounds.size.height)}, 200, nil);
         } else if ([purePath isEqualToString:@"/guest/ocr"]) {
             NSArray<NSDictionary *> *items = LCRecognizeText();
-            NSString *want = nil;
-            for (NSString *kv in [purePath isEqualToString:@""] ? @[] : [path componentsSeparatedByString:@"?"]) {
-                if ([kv hasPrefix:@"text="]) want = [kv substringFromIndex:5].stringByRemovingPercentEncoding;
-            }
+            NSString *want = query[@"text"];
             if (want.length) {
                 NSMutableArray *hit = [NSMutableArray array];
                 for (NSDictionary *it in items) {
