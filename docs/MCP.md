@@ -56,7 +56,7 @@ MCP 客户端（Claude / Hermes / …） ──stdio──▶ tools/mcp/lc_mcp.p
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | python3 lc_mcp.py
 ```
 
-## 三、工具清单（33 个）
+## 三、工具清单（36 个）
 
 ### 设备 / 安装 / 启动
 

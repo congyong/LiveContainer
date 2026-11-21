@@ -374,7 +374,61 @@ def tool_open_app(args):
                     data=json.dumps(body).encode(), content_type="application/json")
 
 
+def tool_window_chrome(args):
+    wid = args.get("window_id", "")
+    if not wid:
+        raise RuntimeError("需要 window_id（先用 lc_windows 取）")
+    return api_get("/api/v1/windows/%s/chrome" % wid)
+
+
+def tool_window_press(args):
+    wid = args.get("window_id", "")
+    sel = args.get("selector", "")
+    if not wid or not sel:
+        raise RuntimeError("需要 window_id 和 selector（closeWindow / maximizeWindow / minimizeWindow）")
+    return _request("POST", "/api/v1/windows/%s/press" % wid,
+                    data=json.dumps({"selector": sel}).encode(), content_type="application/json")
+
+
+def tool_close_app(args):
+    """按 bundleId 关掉 App：找到它的多任务窗口，走 UI 关闭按钮的事件（closeWindow），并确认进程已退出。"""
+    bundle_id = args.get("bundle_id", "")
+    if not bundle_id:
+        raise RuntimeError("需要 bundle_id")
+    wins = api_get("/api/v1/windows")
+    targets = [w for w in wins.get("windows", []) if w.get("bundleId", "").startswith(bundle_id)]
+    if not targets:
+        return {"closed": False, "reason": "没有这个 App 的窗口（可能本来就没开）", "bundleId": bundle_id}
+    results = []
+    for w in targets:
+        r = _request("POST", "/api/v1/windows/%s/close" % w["id"],
+                     data=b"{}", content_type="application/json")
+        results.append({"window": w["id"], "result": r})
+    alive = api_get("/api/v1/windows")
+    return {"bundleId": bundle_id, "results": results,
+            "windowsLeft": alive.get("count", -1)}
+
+
 TOOLS = [
+    {
+        "name": "lc_window_chrome",
+        "description": "列出多任务窗口标题栏那三个按钮（关闭/最大化/最小化）绑定的 selector，便于按按钮而不是猜行为。",
+        "inputSchema": {"type": "object", "properties": {"window_id": {"type": "string"}}, "required": ["window_id"]},
+    },
+    {
+        "name": "lc_window_press",
+        "description": "按标题栏按钮绑定的 selector 触发事件（等价于点那个按钮）：closeWindow / maximizeWindow / minimizeWindow。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"window_id": {"type": "string"}, "selector": {"type": "string"}},
+            "required": ["window_id", "selector"],
+        },
+    },
+    {
+        "name": "lc_close_app",
+        "description": "按 bundle_id 关掉 App：触发窗口的关闭按钮事件并确认进程已退出。调试完收尾用它。",
+        "inputSchema": {"type": "object", "properties": {"bundle_id": {"type": "string"}}, "required": ["bundle_id"]},
+    },
     {
         "name": "lc_open_app",
         "description": "一步打开已装 App（多任务窗口）并等 guest 侧就绪，返回窗口与 guest pid。想进 App 内部操作时先用它。",
@@ -717,6 +771,9 @@ TOOLS = [
 ]
 
 HANDLERS = {
+    "lc_window_chrome": tool_window_chrome,
+    "lc_window_press": tool_window_press,
+    "lc_close_app": tool_close_app,
     "lc_open_app": tool_open_app,
     "lc_health": tool_health,
     "lc_apps": tool_apps,
