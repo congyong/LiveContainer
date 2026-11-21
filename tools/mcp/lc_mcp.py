@@ -22,6 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from urllib.parse import quote
 import uuid
 
 SERVER_NAME = "livecontainer-remote"
@@ -409,6 +410,27 @@ def tool_close_app(args):
             "windowsLeft": alive.get("count", -1)}
 
 
+def tool_guest_ocr(args):
+    qs = []
+    if args.get("text"):
+        qs.append("text=" + quote(str(args["text"])))
+    if args.get("no_cache"):
+        qs.append("no_cache=1")
+    path = "/api/v1/guest/ocr" + (("?" + "&".join(qs)) if qs else "")
+    return api_get(path)
+
+
+def tool_guest_ocr_history(args):
+    return api_get("/api/v1/guest/ocr/history?limit=%d" % int(args.get("limit", 20)))
+
+
+def tool_guest_inspect(args):
+    idx = args.get("index")
+    if idx is None:
+        raise RuntimeError("需要 index（来自 lc_guest_tree）")
+    return api_get("/api/v1/guest/inspect?index=%d" % int(idx))
+
+
 TOOLS = [
     {
         "name": "lc_window_chrome",
@@ -613,6 +635,26 @@ TOOLS = [
         },
     },
     {
+        "name": "lc_guest_ocr",
+        "description": "OCR 当前 guest 画面（系统 Vision，中文+英文），返回文字与坐标框。视图树读不到文字的自绘/WebView 界面靠它。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "只返回包含该文字的结果"},
+            },
+        },
+    },
+    {
+        "name": "lc_guest_ocr_history",
+        "description": "回看 OCR 历史记录（每次识别都落盘），看某个页面当时识别到了什么文字。",
+        "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer"}}},
+    },
+    {
+        "name": "lc_guest_inspect",
+        "description": "导出某个元素的视图结构（class/frame/子视图/读到的文字），用来判断文字是控件还是画上去的。",
+        "inputSchema": {"type": "object", "properties": {"index": {"type": "integer"}}, "required": ["index"]},
+    },
+    {
         "name": "lc_guest_info",
         "description": "guest App 进程信息（bundleId / pid / 屏幕尺寸）。需要 guest App 正在运行。",
         "inputSchema": {"type": "object", "properties": {}},
@@ -792,6 +834,9 @@ HANDLERS = {
     "lc_install_from_url": tool_install_from_url,
     "lc_ui_tree": tool_ui_tree,
     "lc_ui_activate": tool_ui_activate,
+    "lc_guest_ocr": tool_guest_ocr,
+    "lc_guest_ocr_history": tool_guest_ocr_history,
+    "lc_guest_inspect": tool_guest_inspect,
     "lc_guest_info": tool_guest_info,
     "lc_guest_tree": tool_guest_tree,
     "lc_guest_activate": tool_guest_activate,
