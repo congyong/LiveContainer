@@ -39,6 +39,10 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
           xcodebuild -list -project LiveContainer.xcodeproj | head -40
 
+      - name: Prepare Dependencies
+        run: |
+          sh .github/prepare_dependencies.sh
+
       - name: Archive
         id: archive
         run: |
