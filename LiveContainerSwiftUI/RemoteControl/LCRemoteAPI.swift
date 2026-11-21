@@ -101,6 +101,14 @@ enum LCRemoteAPI {
             case ("POST", "/api/v1/tweakfolders"):
                 return try await tweakCreateFolder(req)
 
+            case ("GET", let p) where p.hasPrefix("/api/v1/windows/"):
+                // GET /api/v1/windows/{id}/chrome → 标题栏上三个按钮绑定的 selector
+                let parts = p.dropFirst("/api/v1/windows/".count).split(separator: "/")
+                guard parts.count == 2, parts[1] == "chrome" else {
+                    return .error("未知接口 \(p)", status: 404, code: "not_found")
+                }
+                return await windowChrome(String(parts[0]))
+
             case ("GET", "/api/v1/windows"):
                 return await windowList(req)
 
@@ -357,6 +365,12 @@ enum LCRemoteAPI {
         return .json(["created": created], status: 201)
     }
 
+    @MainActor
+    private static func windowChrome(_ id: String) async -> LCRemoteResponse {
+        let buttons = LCWindowManager.chromeButtons(id)
+        return .json(["id": id, "count": buttons.count, "buttons": buttons])
+    }
+
     // MARK: - 多任务窗口 / 截图
 
     @MainActor
@@ -409,6 +423,18 @@ enum LCRemoteAPI {
                 try LCWindowManager.setMaximized(id, maximized: boolValue("enabled", default: true))
             case "close":
                 return await terminateWindow(id)
+            case "press":
+                guard let sel = (obj?["selector"] as? String) ?? req.query["selector"], !sel.isEmpty else {
+                    return .error("press 需要 selector，例如 closeWindow / maximizeWindow / minimizeWindow",
+                                  status: 400, code: "bad_request")
+                }
+                do {
+                    let r = try LCWindowManager.pressChrome(id, selector: sel)
+                    return .json(["ok": true, "action": "press", "id": id, "result": r,
+                                  "windows": LCWindowManager.windows().filter { $0.isRunning }.map { $0.json }])
+                } catch {
+                    return .error(error.localizedDescription, status: 400, code: "press_failed")
+                }
             default:
                 return .error("未知动作 \(action)", status: 400, code: "bad_request")
             }

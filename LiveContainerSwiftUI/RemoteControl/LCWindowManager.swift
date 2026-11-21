@@ -178,6 +178,50 @@ private enum LCWindowManager16 {
         return found.scene.view
     }
 
+    /// 装饰窗口标题栏上的三个按钮（关闭 / 最大化 / 最小化）就是 UIBarButtonItem，
+    /// 这里把它们连同绑定的 selector 一起列出来，方便"按按钮"而不是自己发明行为。
+    static func chromeButtons(_ id: String) -> [[String: Any]] {
+        guard let deco = find(id)?.decorated else { return [] }
+        var out: [[String: Any]] = []
+        let items = (deco.navigationBar.topItem?.leftBarButtonItems ?? [])
+                  + (deco.navigationBar.topItem?.rightBarButtonItems ?? [])
+        for (i, item) in items.enumerated() {
+            guard let action = item.action else { continue }
+            out.append([
+                "index": i,
+                "selector": NSStringFromSelector(action),
+                "target": item.target.map { NSStringFromClass(type(of: $0)) } ?? "",
+                "enabled": item.isEnabled,
+                "tint": item.tintColor.map { "\($0)" } ?? ""
+            ])
+        }
+        return out
+    }
+
+    /// 按 UI 上按钮绑定的 selector 触发事件（等价于点那个按钮）
+    @discardableResult
+    static func pressChrome(_ id: String, selector: String) throws -> [String: Any] {
+        guard let deco = find(id)?.decorated else {
+            throw LCWindowManagerError.unsupported("窗口 \(id) 不是装饰窗口，没有标题栏按钮")
+        }
+        let items = (deco.navigationBar.topItem?.leftBarButtonItems ?? [])
+                  + (deco.navigationBar.topItem?.rightBarButtonItems ?? [])
+        for item in items where item.action != nil {
+            guard NSStringFromSelector(item.action!) == selector else { continue }
+            let sent = UIApplication.shared.sendAction(item.action!, to: item.target, from: item, for: nil)
+            LCRemoteLogStore.shared.append("window \(id) chrome button \(selector) sent=\(sent)", src: "api")
+            return ["ok": sent, "selector": selector, "sent": sent]
+        }
+        // 标题栏没拿到（有些状态按钮不在 items 里）→ 直接对控制器发同名 selector
+        let sel = NSSelectorFromString(selector)
+        guard deco.responds(to: sel) else {
+            throw LCWindowManagerError.unsupported("装饰窗口没有 \(selector)，可用的按钮: \(chromeButtons(id))")
+        }
+        _ = deco.perform(sel)
+        LCRemoteLogStore.shared.append("window \(id) performed \(selector) directly", src: "api")
+        return ["ok": true, "selector": selector, "sent": false]
+    }
+
     private static func findSlider(in v: UIView) -> UISlider? {
         if let s = v as? UISlider { return s }
         for sub in v.subviews {
@@ -234,19 +278,17 @@ private enum LCWindowManager16 {
             throw LCWindowManagerError.unsupported("窗口 \(id) 不是装饰窗口")
         }
         if deco.isMaximized != maximized {
-            // maximizeWindow 是 toggle（和 UI 上绿色按钮同一个事件）
-            _ = deco.perform(NSSelectorFromString("maximizeWindow"))
+            // 绿色按钮绑的就是 maximizeWindow（toggle）
+            try pressChrome(id, selector: "maximizeWindow")
         }
-        LCRemoteLogStore.shared.append("window \(id) maximizeWindow -> \(maximized)", src: "api")
+        LCRemoteLogStore.shared.append("window \(id) maximized=\(maximized)", src: "api")
     }
 
     static func close(_ id: String) throws {
         guard let found = find(id) else { throw LCWindowManagerError.notFound(id) }
-        if let deco = found.decorated {
-            // 这就是 UI 上红色 ✕ 按钮绑的事件：置 _isAppTerminationRequested，再让 scene terminate
-            // （SIGTERM → 3s 后 SIGKILL），并走正规的退出清理。
-            _ = deco.perform(NSSelectorFromString("closeWindow"))
-            LCRemoteLogStore.shared.append("window \(id) closeWindow (UI 关闭按钮事件)", src: "api")
+        if found.decorated != nil {
+            // UI 上红色 ✕ 绑的就是 closeWindow（置 _isAppTerminationRequested → scene terminate）
+            try pressChrome(id, selector: "closeWindow")
             return
         }
         found.scene.terminate()
