@@ -440,6 +440,76 @@ static NSDictionary *LCTextInput(NSString *text) {
     return @{@"ok": @NO, @"detail": [NSString stringWithFormat:@"%@ does not accept text", NSStringFromClass(fr.class)]};
 }
 
+// maxWidth is in OUTPUT PIXELS: size is points and the bitmap is size * scale, so the target
+// rect has to be maxWidth / scale points wide while the renderer keeps the device scale.
+static UIImage *LCResize(UIImage *img, CGFloat maxWidth) {
+    if (!img || maxWidth <= 0) return img;
+    CGFloat pixelWidth = img.size.width * img.scale;
+    if (pixelWidth <= maxWidth) return img;
+    CGFloat ratio = maxWidth / pixelWidth;
+    CGSize size = CGSizeMake(floor(img.size.width * ratio), floor(img.size.height * ratio));
+    UIGraphicsImageRendererFormat *f = [UIGraphicsImageRendererFormat defaultFormat];
+    f.scale = img.scale;
+    return [[[UIGraphicsImageRenderer alloc] initWithSize:size format:f] imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        [img drawInRect:CGRectMake(0, 0, size.width, size.height)];
+    }];
+}
+
+// Web content is rendered by the WebContent process, so drawViewHierarchy commonly returns black
+// for WKWebView-based apps even when the view tree is perfectly fine. WKWebView can render itself
+// for us (takeSnapshotWithConfiguration:), which is the only way to get real pixels there.
+static UIView *LCFindLargestWebView(UIView *view, CGFloat *bestArea) {
+    if (!view || view.hidden || view.alpha < 0.01) return nil;
+    static Class kWebViewClass = Nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ kWebViewClass = NSClassFromString(@"WKWebView"); });
+    UIView *best = nil;
+    if (kWebViewClass && [view isKindOfClass:kWebViewClass]) {
+        CGFloat area = view.bounds.size.width * view.bounds.size.height;
+        if (area > *bestArea) { *bestArea = area; best = view; }
+    }
+    for (UIView *sub in view.subviews) {
+        UIView *found = LCFindLargestWebView(sub, bestArea);
+        if (found) best = found;
+    }
+    return best;
+}
+
+// Screenshot that prefers live web content over the (frequently black) view hierarchy.
+static void LCSnapshotWithWeb(CGFloat maxWidth, void (^done)(UIImage *)) {
+    UIImage *base = LCSnapshot(0);
+    UIWindow *key = LCKeyWindow();
+    CGFloat bestArea = 0;
+    UIView *web = nil;
+    for (UIScene *scene in LCApp().connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+            if (w.hidden || w.alpha < 0.01) continue;
+            UIView *found = LCFindLargestWebView(w, &bestArea);
+            if (found) web = found;
+        }
+    }
+    SEL sel = NSSelectorFromString(@"takeSnapshotWithConfiguration:completionHandler:");
+    CGFloat minArea = key ? key.bounds.size.width * key.bounds.size.height * 0.2 : 0;
+    if (!web || !key || bestArea < minArea || ![web respondsToSelector:sel]) {
+        done(LCResize(base, maxWidth));
+        return;
+    }
+    CGRect frame = [web convertRect:web.bounds toView:nil];
+    typedef void (*LCTakeSnapshotFn)(id, SEL, id, void (^)(UIImage *, NSError *));
+    ((LCTakeSnapshotFn)objc_msgSend)(web, sel, nil, ^(UIImage *shot, NSError *err) {
+        UIImage *out = base ?: shot;
+        if (shot && base) {
+            UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithBounds:key.bounds];
+            out = [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+                [base drawInRect:key.bounds];
+                [shot drawInRect:frame];
+            }];
+        }
+        done(LCResize(out, maxWidth));
+    });
+}
+
 static UIImage *LCSnapshot(CGFloat maxWidth) {
     UIWindow *key = LCKeyWindow();
     if (!key || key.bounds.size.width < 1) return nil;
@@ -474,19 +544,7 @@ static UIImage *LCSnapshot(CGFloat maxWidth) {
     }];
     if (!img) return nil;
 
-    // maxWidth is in OUTPUT PIXELS: size is points, the bitmap is size * scale, so the target
-    // rect has to be maxWidth / scale points tall and the renderer keeps the device scale.
-    CGFloat pixelWidth = img.size.width * img.scale;
-    if (maxWidth > 0 && pixelWidth > maxWidth) {
-        CGFloat ratio = maxWidth / pixelWidth;
-        CGSize size = CGSizeMake(floor(img.size.width * ratio), floor(img.size.height * ratio));
-        UIGraphicsImageRendererFormat *f = [UIGraphicsImageRendererFormat defaultFormat];
-        f.scale = img.scale;
-        img = [[[UIGraphicsImageRenderer alloc] initWithSize:size format:f] imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
-            [img drawInRect:CGRectMake(0, 0, size.width, size.height)];
-        }];
-    }
-    return img;
+    return LCResize(img, maxWidth);
 }
 
 // ── OCR ─────────────────────────────────────────────────────────────────────
@@ -513,8 +571,8 @@ static void LCOCRInitStore(void) {
 }
 
 // Screen fingerprint (8 bytes of sha256).
-static NSString *LCScreenDigest(void) {
-    NSData *thumb = LCGrayThumb();
+static NSString *LCImageDigest(UIImage *img) {
+    NSData *thumb = LCGrayThumbOf(img);
     if (!thumb) return @"";
     unsigned char digest[CC_SHA256_DIGEST_LENGTH] = {0};
     CC_SHA256(thumb.bytes, (CC_LONG)thumb.length, digest);
@@ -523,14 +581,18 @@ static NSString *LCScreenDigest(void) {
     return s;
 }
 
+static NSString *LCScreenDigest(void) {
+    return LCImageDigest(LCSnapshot(220));
+}
+
 // Cached OCR run: returns (items, cached, digest).
-static NSDictionary *LCOCRRun(void) {
+static NSDictionary *LCOCRRunWithImage(UIImage *img) {
     LCOCRInitStore();
-    NSString *digest = LCScreenDigest();
+    NSString *digest = LCImageDigest(img);
     if (digest.length && gOcrCache[digest]) {
         return @{@"items": gOcrCache[digest], @"cached": @YES, @"digest": digest};
     }
-    NSArray<NSDictionary *> *items = LCRecognizeText();
+    NSArray<NSDictionary *> *items = LCRecognizeImage(img);
     if (digest.length) {
         if (gOcrCache.count > 80) [gOcrCache removeAllObjects];
         gOcrCache[digest] = items;
@@ -559,6 +621,10 @@ static NSDictionary *LCOCRRun(void) {
     return @{@"items": items, @"cached": @NO, @"digest": digest ?: @""};
 }
 
+static NSDictionary *LCOCRRun(void) {
+    return LCOCRRunWithImage(LCSnapshot(0));
+}
+
 // -- view-structure dump (answers "is this a control or painted?") ---------
 static NSDictionary *LCInspectNode(UIView *v, NSInteger depth) {
     if (!v || depth > 8) return @{};
@@ -578,8 +644,7 @@ static NSDictionary *LCInspectNode(UIView *v, NSInteger depth) {
              @"subviews": kids};
 }
 
-static NSArray<NSDictionary *> *LCRecognizeText(void) {
-    UIImage *img = LCSnapshot(0);
+static NSArray<NSDictionary *> *LCRecognizeImage(UIImage *img) {
     CGImageRef cg = img.CGImage;
     if (!cg) return @[];
     CGSize pts = img.size;                 // point size == window bounds
@@ -612,10 +677,13 @@ static NSArray<NSDictionary *> *LCRecognizeText(void) {
     return items;
 }
 
+static NSArray<NSDictionary *> *LCRecognizeText(void) {
+    return LCRecognizeImage(LCSnapshot(0));
+}
+
 // Downscale the screen to a 48x96 thumbnail (UIGraphicsImageRenderer + RGBA bitmap;
 // the earlier CGBitmapContextCreate(gray) variant read back all zeros on device, so diff was always 0).
-static NSData *LCGrayThumb(void) {
-    UIImage *img = LCSnapshot(220);
+static NSData *LCGrayThumbOf(UIImage *img) {
     if (!img) return nil;
     const CGFloat W = 48, H = 96;
     UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat defaultFormat];
@@ -638,6 +706,10 @@ static NSData *LCGrayThumb(void) {
     CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), cg);
     CGContextRelease(ctx);
     return [NSData dataWithBytesNoCopy:buf length:w * h * 4 freeWhenDone:YES];
+}
+
+static NSData *LCGrayThumb(void) {
+    return LCGrayThumbOf(LCSnapshot(220));
 }
 
 // Ratio of differing pixels between two thumbnails (0-1); catches subtle changes a hash comparison misses.
@@ -682,6 +754,7 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
 
     // All UI work is marshalled onto the main thread.
     __block NSData *result = nil;
+    __block BOOL asyncPending = NO;      // web content snapshots complete later, on the main queue
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([purePath isEqualToString:@"/guest/info"]) {
@@ -695,20 +768,24 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
                               @"viewWidth": @(root.bounds.size.width),
                               @"viewHeight": @(root.bounds.size.height)}, 200, nil);
         } else if ([purePath isEqualToString:@"/guest/ocr"]) {
-            NSDictionary *run = LCOCRRun();
-            NSArray<NSDictionary *> *items = run[@"items"];
             NSString *want = query[@"text"];
-            if (want.length) {
-                NSMutableArray *hit = [NSMutableArray array];
-                for (NSDictionary *it in items) {
-                    if ([it[@"text"] containsString:want]) [hit addObject:it];
+            asyncPending = YES;
+            LCSnapshotWithWeb(0, ^(UIImage *img) {
+                NSDictionary *run = LCOCRRunWithImage(img);
+                NSArray<NSDictionary *> *items = run[@"items"];
+                if (want.length) {
+                    NSMutableArray *hit = [NSMutableArray array];
+                    for (NSDictionary *it in items) {
+                        if ([it[@"text"] containsString:want]) [hit addObject:it];
+                    }
+                    result = LCJSON(@{@"ok": @YES, @"count": @(hit.count), @"items": hit,
+                                      @"cached": run[@"cached"], @"digest": run[@"digest"]}, 200, nil);
+                } else {
+                    result = LCJSON(@{@"ok": @YES, @"count": @(items.count), @"items": items,
+                                      @"cached": run[@"cached"], @"digest": run[@"digest"]}, 200, nil);
                 }
-                result = LCJSON(@{@"ok": @YES, @"count": @(hit.count), @"items": hit,
-                                  @"cached": run[@"cached"], @"digest": run[@"digest"]}, 200, nil);
-            } else {
-                result = LCJSON(@{@"ok": @YES, @"count": @(items.count), @"items": items,
-                                  @"cached": run[@"cached"], @"digest": run[@"digest"]}, 200, nil);
-            }
+                dispatch_semaphore_signal(sem);
+            });
         } else if ([purePath isEqualToString:@"/guest/ocr/history"]) {
             LCOCRInitStore();
             NSInteger limit = query[@"limit"] ? [query[@"limit"] integerValue] : 20;
@@ -777,13 +854,16 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
         } else if ([purePath isEqualToString:@"/guest/screenshot"]) {
             CGFloat maxWidth = query[@"maxWidth"] ? [query[@"maxWidth"] doubleValue] : 600;
             CGFloat quality = query[@"quality"] ? [query[@"quality"] doubleValue] / 100.0 : 0.7;
-            UIImage *img = LCSnapshot(maxWidth);
-            NSData *d = UIImageJPEGRepresentation(img, quality);
-            result = d ? LCBinary(d, @"image/jpeg", 200) : LCJSON(@{@"ok": @NO, @"error": @"capture failed"}, 500, nil);
+            asyncPending = YES;
+            LCSnapshotWithWeb(maxWidth, ^(UIImage *img) {
+                NSData *d = UIImageJPEGRepresentation(img, quality);
+                result = d ? LCBinary(d, @"image/jpeg", 200) : LCJSON(@{@"ok": @NO, @"error": @"capture failed"}, 500, nil);
+                dispatch_semaphore_signal(sem);
+            });
         } else {
             result = LCJSON(@{@"ok": @NO, @"error": @"no route"}, 404, nil);
         }
-        dispatch_semaphore_signal(sem);
+        if (!asyncPending) dispatch_semaphore_signal(sem);
     });
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 20ull * NSEC_PER_SEC));
     return result ?: LCJSON(@{@"ok": @NO, @"error": @"timeout"}, 500, nil);
