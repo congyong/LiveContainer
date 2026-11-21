@@ -66,7 +66,7 @@ enum LCRemoteAPI {
                     return .error("需要 msg", status: 400, code: "bad_request")
                 }
                 LCRemoteLogStore.shared.append(msg, src: src)
-                return .json(["pushed": true, "src": src, "latest": LCRemoteLogStore.shared.latestSeq()])
+                return .json(["pushed": true, "src": src, "latest": LCRemoteLogStore.shared.latestSeq])
 
             case ("GET", "/api/v1/logs/guest"):
                 return guestLogs(req)
