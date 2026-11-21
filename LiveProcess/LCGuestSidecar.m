@@ -30,6 +30,10 @@ static const int kLCGuestSidecarPort = 8850;
 
 // 前置声明：activate 里会先用，实现放在 LCSnapshot 之后
 static NSArray<NSDictionary *> *LCRecognizeText(void);
+static NSDictionary *LCOCRRun(void);
+static NSData *LCGrayThumb(void);
+static void LCCollectTexts(UIView *v, NSMutableArray<NSString *> *out, NSInteger depth);
+static void LCCollectLayerTexts(CALayer *layer, NSMutableArray<NSString *> *out, NSInteger depth);
 
 // 扩展里 UIKit 没把 accessibilityIdentifier 放进 NSObject 的可见接口，这里补个声明
 @interface NSObject (LCGuestA11y)
