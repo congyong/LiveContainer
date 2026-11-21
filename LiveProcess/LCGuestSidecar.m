@@ -463,6 +463,27 @@ static UIImage *LCResize(UIImage *img, CGFloat maxWidth) {
     }];
 }
 
+// Cheap "is this image basically blank" probe (samples a grid, ignores alpha).
+static BOOL LCIsBlankImage(UIImage *img) {
+    CGImageRef cg = img.CGImage;
+    if (!cg) return YES;
+    size_t w = CGImageGetWidth(cg), h = CGImageGetHeight(cg);
+    if (!w || !h) return YES;
+    unsigned char buf[4 * 64];
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(buf, 8, 8, 8, 32, cs, kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(cs);
+    if (!ctx) return YES;
+    CGContextDrawImage(ctx, CGRectMake(0, 0, 8, 8), cg);
+    CGContextRelease(ctx);
+    NSUInteger lit = 0;
+    for (int i = 0; i < 64; i++) {
+        int v = buf[i * 4] + buf[i * 4 + 1] + buf[i * 4 + 2];
+        if (v > 24) lit++;
+    }
+    return lit <= 2;
+}
+
 // Web content is rendered by the WebContent process, so drawViewHierarchy commonly returns black
 // for WKWebView-based apps even when the view tree is perfectly fine. WKWebView can render itself
 // for us (takeSnapshotWithConfiguration:), which is the only way to get real pixels there.
@@ -766,6 +787,32 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([purePath isEqualToString:@"/guest/info"]) {
+            // Diagnostics: why a capture can be black is otherwise unguessable from the outside
+            // (locked screen, offscreen scene, webview surface in another process).
+            NSMutableArray *windowInfo = [NSMutableArray array];
+            NSMutableArray *webInfo = [NSMutableArray array];
+            NSInteger sceneState = -1;
+            for (UIScene *scene in LCApp().connectedScenes) {
+                sceneState = (NSInteger)scene.activationState;
+                if (![scene isKindOfClass:UIWindowScene.class]) continue;
+                for (UIWindow *win in ((UIWindowScene *)scene).windows) {
+                    [windowInfo addObject:@{@"level": @(win.windowLevel),
+                                            @"frame": NSStringFromCGRect(win.frame),
+                                            @"hidden": @(win.hidden),
+                                            @"alpha": @(win.alpha),
+                                            @"key": @(win.isKeyWindow)}];
+                    CGFloat area = 0;
+                    UIView *v = LCFindLargestWebView(win, &area);
+                    if (v) {
+                        [webInfo addObject:@{@"class": NSStringFromClass(v.class),
+                                             @"frame": NSStringFromCGRect([v convertRect:v.bounds toView:nil]),
+                                             @"area": @(area),
+                                             @"hidden": @(v.hidden),
+                                             @"canSnapshot": @([v respondsToSelector:NSSelectorFromString(@"takeSnapshotWithConfiguration:completionHandler:")])}];
+                    }
+                }
+            }
+            UIImage *probe = LCSnapshot(0);
             UIWindow *w = LCKeyWindow();
             // view* is the guest's own coordinate space (old apps lay out at their own logical size,
             // which may differ from screen points); pass x/y in that space, and tree frames use it too.
@@ -774,7 +821,12 @@ static NSData *LCHandleRequest(NSString *method, NSString *path, NSDictionary *h
                               @"bundleId": NSBundle.mainBundle.bundleIdentifier ?: @"",
                               @"width": @(w.bounds.size.width), @"height": @(w.bounds.size.height),
                               @"viewWidth": @(root.bounds.size.width),
-                              @"viewHeight": @(root.bounds.size.height)}, 200, nil);
+                              @"viewHeight": @(root.bounds.size.height),
+                              @"sceneState": @(sceneState),
+                              @"screenBrightness": @(UIScreen.mainScreen.brightness),
+                              @"captureBlank": @(LCIsBlankImage(probe)),
+                              @"windows": windowInfo,
+                              @"webViews": webInfo}, 200, nil);
         } else if ([purePath isEqualToString:@"/guest/ocr"]) {
             NSString *want = query[@"text"];
             asyncPending = YES;
